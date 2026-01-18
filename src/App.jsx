@@ -1,5 +1,6 @@
+import { scheduleApi } from "./supabase";
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronLeft, ChevronRight, Clock, Coffee, Briefcase, Home, Gamepad2, Music, BookOpen, Heart, Printer, Moon, Sun, Star, Calendar, CheckCircle2, GripVertical, Save, RotateCcw, Edit2, Check, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Clock, Coffee, Briefcase, Home, Gamepad2, Music, BookOpen, Heart, Printer, Moon, Sun, Star, Calendar, CheckCircle2, GripVertical, Save, RotateCcw, Edit2, Check, X, Cloud, CloudOff, Loader2 } from 'lucide-react';
 
 const categories = {
   'Morning': { color: 'bg-amber-500', icon: Coffee },
@@ -294,6 +295,8 @@ export default function JustinSchedule() {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [schedule, setSchedule] = useState(initialSchedule);
   const [hasChanges, setHasChanges] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState('idle'); // 'idle', 'syncing', 'synced', 'error'
   
   // Edit state
   const [editingItem, setEditingItem] = useState(null);
@@ -309,28 +312,85 @@ export default function JustinSchedule() {
     return () => clearInterval(timer);
   }, []);
 
-  // Load saved schedule from localStorage
+  // Load saved schedule from Supabase (with localStorage fallback)
   useEffect(() => {
-    const saved = localStorage.getItem('justinSchedule');
-    if (saved) {
+    const loadSchedule = async () => {
+      setIsSyncing(true);
+      setSyncStatus('syncing');
+      
       try {
-        setSchedule(JSON.parse(saved));
+        // Try to load from Supabase first
+        const cloudData = await scheduleApi.load('justin');
+        if (cloudData) {
+          setSchedule(cloudData);
+          localStorage.setItem('justinSchedule', JSON.stringify(cloudData));
+          setSyncStatus('synced');
+        } else {
+          // Fall back to localStorage
+          const saved = localStorage.getItem('justinSchedule');
+          if (saved) {
+            setSchedule(JSON.parse(saved));
+          }
+          setSyncStatus('idle');
+        }
       } catch (e) {
-        console.error('Failed to load schedule');
+        console.error('Failed to load from cloud, using localStorage:', e);
+        const saved = localStorage.getItem('justinSchedule');
+        if (saved) {
+          try {
+            setSchedule(JSON.parse(saved));
+          } catch (e2) {
+            console.error('Failed to load schedule');
+          }
+        }
+        setSyncStatus('error');
       }
-    }
+      
+      setIsSyncing(false);
+    };
+    
+    loadSchedule();
   }, []);
 
-  const saveSchedule = () => {
+  const saveSchedule = async () => {
+    setIsSyncing(true);
+    setSyncStatus('syncing');
+    
+    // Save to localStorage immediately
     localStorage.setItem('justinSchedule', JSON.stringify(schedule));
-    setHasChanges(false);
+    
+    // Then sync to Supabase
+    try {
+      const success = await scheduleApi.save(schedule, 'justin');
+      if (success) {
+        setSyncStatus('synced');
+        setHasChanges(false);
+      } else {
+        setSyncStatus('error');
+      }
+    } catch (e) {
+      console.error('Failed to save to cloud:', e);
+      setSyncStatus('error');
+    }
+    
+    setIsSyncing(false);
   };
 
-  const resetSchedule = () => {
+  const resetSchedule = async () => {
     if (confirm('Reset schedule to default? This cannot be undone.')) {
       setSchedule(initialSchedule);
       localStorage.removeItem('justinSchedule');
       setHasChanges(false);
+      
+      // Also delete from Supabase
+      setIsSyncing(true);
+      try {
+        await scheduleApi.delete('justin');
+        setSyncStatus('idle');
+      } catch (e) {
+        console.error('Failed to delete from cloud:', e);
+      }
+      setIsSyncing(false);
     }
   };
 
@@ -541,18 +601,47 @@ export default function JustinSchedule() {
               </p>
             </div>
             <div className="flex items-center gap-2">
+              {/* Sync Status Indicator */}
+              <div className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs ${
+                syncStatus === 'synced' 
+                  ? darkMode ? 'bg-green-900/50 text-green-400' : 'bg-green-100 text-green-700'
+                  : syncStatus === 'syncing'
+                    ? darkMode ? 'bg-blue-900/50 text-blue-400' : 'bg-blue-100 text-blue-700'
+                    : syncStatus === 'error'
+                      ? darkMode ? 'bg-red-900/50 text-red-400' : 'bg-red-100 text-red-700'
+                      : darkMode ? 'bg-slate-700 text-slate-400' : 'bg-gray-200 text-gray-500'
+              }`}>
+                {isSyncing ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : syncStatus === 'synced' ? (
+                  <Cloud className="w-3 h-3" />
+                ) : syncStatus === 'error' ? (
+                  <CloudOff className="w-3 h-3" />
+                ) : (
+                  <Cloud className="w-3 h-3" />
+                )}
+                <span>{
+                  isSyncing ? 'Syncing...' 
+                  : syncStatus === 'synced' ? 'Synced' 
+                  : syncStatus === 'error' ? 'Offline' 
+                  : 'Local'
+                }</span>
+              </div>
+              
               {hasChanges && (
                 <>
                   <button
                     onClick={saveSchedule}
-                    className="p-2 rounded-lg bg-green-600 hover:bg-green-500 text-white transition-colors flex items-center gap-1"
+                    disabled={isSyncing}
+                    className="p-2 rounded-lg bg-green-600 hover:bg-green-500 disabled:bg-green-800 disabled:cursor-not-allowed text-white transition-colors flex items-center gap-1"
                     title="Save changes"
                   >
-                    <Save className="w-4 h-4" />
+                    {isSyncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                   </button>
                   <button
                     onClick={resetSchedule}
-                    className="p-2 rounded-lg bg-red-600 hover:bg-red-500 text-white transition-colors flex items-center gap-1"
+                    disabled={isSyncing}
+                    className="p-2 rounded-lg bg-red-600 hover:bg-red-500 disabled:bg-red-800 disabled:cursor-not-allowed text-white transition-colors flex items-center gap-1"
                     title="Reset to default"
                   >
                     <RotateCcw className="w-4 h-4" />
@@ -847,3 +936,4 @@ export default function JustinSchedule() {
     </div>
   );
 }
+
