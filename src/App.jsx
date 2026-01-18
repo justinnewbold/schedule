@@ -1,6 +1,6 @@
 import { scheduleApi } from "./supabase";
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronLeft, ChevronRight, Clock, Coffee, Briefcase, Home, Gamepad2, Music, BookOpen, Heart, Printer, Moon, Sun, Star, Calendar, CheckCircle2, GripVertical, Save, RotateCcw, Edit2, Check, X, Cloud, CloudOff, Loader2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Clock, Coffee, Briefcase, Home, Gamepad2, Music, BookOpen, Heart, Printer, Moon, Sun, Star, Calendar, CheckCircle2, GripVertical, Save, RotateCcw, Edit2, Check, X, Cloud, CloudOff, Loader2, Plus, Trash2, Play } from 'lucide-react';
 
 const categories = {
   'Morning': { color: 'bg-amber-500', icon: Coffee },
@@ -17,6 +17,8 @@ const categories = {
   'Evening': { color: 'bg-violet-600', icon: Moon },
   'Special': { color: 'bg-yellow-500', icon: Star },
 };
+
+const categoryList = Object.keys(categories).filter(c => c !== 'Transition');
 
 const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -258,25 +260,27 @@ const initialSchedule = {
   ],
 };
 
+// Helper to parse time string to minutes since midnight
+const parseTime = (timeStr) => {
+  const [time, period] = timeStr.split(' ');
+  let [hours, minutes] = time.split(':').map(Number);
+  if (period === 'PM' && hours !== 12) hours += 12;
+  if (period === 'AM' && hours === 12) hours = 0;
+  return hours * 60 + minutes;
+};
+
+// Helper to format minutes since midnight to time string
+const formatTime = (totalMinutes) => {
+  let hours = Math.floor(totalMinutes / 60) % 24;
+  const minutes = totalMinutes % 60;
+  const period = hours >= 12 ? 'PM' : 'AM';
+  if (hours === 0) hours = 12;
+  else if (hours > 12) hours -= 12;
+  return `${hours}:${minutes.toString().padStart(2, '0')} ${period}`;
+};
+
 // Helper to recalculate times after reorder
 const recalculateTimes = (items, startTime = '5:45 AM') => {
-  const parseTime = (timeStr) => {
-    const [time, period] = timeStr.split(' ');
-    let [hours, minutes] = time.split(':').map(Number);
-    if (period === 'PM' && hours !== 12) hours += 12;
-    if (period === 'AM' && hours === 12) hours = 0;
-    return hours * 60 + minutes;
-  };
-
-  const formatTime = (totalMinutes) => {
-    let hours = Math.floor(totalMinutes / 60) % 24;
-    const minutes = totalMinutes % 60;
-    const period = hours >= 12 ? 'PM' : 'AM';
-    if (hours === 0) hours = 12;
-    else if (hours > 12) hours -= 12;
-    return `${hours}:${minutes.toString().padStart(2, '0')} ${period}`;
-  };
-
   let currentMinutes = parseTime(startTime);
   return items.map(item => {
     const newItem = { ...item, time: formatTime(currentMinutes) };
@@ -288,6 +292,17 @@ const recalculateTimes = (items, startTime = '5:45 AM') => {
 // Duration preset options
 const durationPresets = [5, 10, 15, 30, 45, 60, 90, 120];
 
+// Day start times
+const dayStartTimes = {
+  Monday: '5:45 AM',
+  Tuesday: '5:45 AM',
+  Wednesday: '5:45 AM',
+  Thursday: '5:45 AM',
+  Friday: '5:45 AM',
+  Saturday: '6:30 AM',
+  Sunday: '7:00 AM',
+};
+
 export default function JustinSchedule() {
   const [selectedDay, setSelectedDay] = useState('Monday');
   const [showTransitions, setShowTransitions] = useState(false);
@@ -296,17 +311,22 @@ export default function JustinSchedule() {
   const [schedule, setSchedule] = useState(initialSchedule);
   const [hasChanges, setHasChanges] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [syncStatus, setSyncStatus] = useState('idle'); // 'idle', 'syncing', 'synced', 'error'
+  const [syncStatus, setSyncStatus] = useState('idle');
   
   // Edit state
   const [editingItem, setEditingItem] = useState(null);
   const [editValues, setEditValues] = useState({ activity: '', duration: 0, time: '' });
+  
+  // Add new item state
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newItem, setNewItem] = useState({ activity: '', duration: 30, category: 'Personal' });
   
   // Drag state
   const [draggedItem, setDraggedItem] = useState(null);
   const [dragOverIndex, setDragOverIndex] = useState(null);
   const dragNode = useRef(null);
 
+  // Update current time every minute
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 60000);
     return () => clearInterval(timer);
@@ -319,14 +339,12 @@ export default function JustinSchedule() {
       setSyncStatus('syncing');
       
       try {
-        // Try to load from Supabase first
         const cloudData = await scheduleApi.load('justin');
         if (cloudData) {
           setSchedule(cloudData);
           localStorage.setItem('justinSchedule', JSON.stringify(cloudData));
           setSyncStatus('synced');
         } else {
-          // Fall back to localStorage
           const saved = localStorage.getItem('justinSchedule');
           if (saved) {
             setSchedule(JSON.parse(saved));
@@ -352,14 +370,45 @@ export default function JustinSchedule() {
     loadSchedule();
   }, []);
 
+  // Get current activity based on time
+  const getCurrentActivity = () => {
+    const now = currentTime;
+    const dayName = days[now.getDay() === 0 ? 6 : now.getDay() - 1]; // Adjust for Sunday = 0
+    const todaySchedule = schedule[dayName];
+    
+    if (!todaySchedule) return null;
+    
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    
+    for (let i = 0; i < todaySchedule.length; i++) {
+      const item = todaySchedule[i];
+      const itemStart = parseTime(item.time);
+      const itemEnd = itemStart + item.duration;
+      
+      if (currentMinutes >= itemStart && currentMinutes < itemEnd) {
+        const minutesRemaining = itemEnd - currentMinutes;
+        const nextItem = todaySchedule[i + 1] || null;
+        return { 
+          current: item, 
+          minutesRemaining, 
+          next: nextItem,
+          dayName,
+          isToday: dayName === days[now.getDay() === 0 ? 6 : now.getDay() - 1]
+        };
+      }
+    }
+    
+    return null;
+  };
+
+  const currentActivity = getCurrentActivity();
+
   const saveSchedule = async () => {
     setIsSyncing(true);
     setSyncStatus('syncing');
     
-    // Save to localStorage immediately
     localStorage.setItem('justinSchedule', JSON.stringify(schedule));
     
-    // Then sync to Supabase
     try {
       const success = await scheduleApi.save(schedule, 'justin');
       if (success) {
@@ -382,7 +431,6 @@ export default function JustinSchedule() {
       localStorage.removeItem('justinSchedule');
       setHasChanges(false);
       
-      // Also delete from Supabase
       setIsSyncing(true);
       try {
         await scheduleApi.delete('justin');
@@ -424,17 +472,6 @@ export default function JustinSchedule() {
         time: editValues.time
       };
       
-      // Recalculate times from the edited item onwards
-      const dayStartTimes = {
-        Monday: '5:45 AM',
-        Tuesday: '5:45 AM',
-        Wednesday: '5:45 AM',
-        Thursday: '5:45 AM',
-        Friday: '5:45 AM',
-        Saturday: '6:30 AM',
-        Sunday: '7:00 AM',
-      };
-      
       updatedSchedule[selectedDay] = recalculateTimes(dayItems, dayStartTimes[selectedDay]);
       setSchedule(updatedSchedule);
       setHasChanges(true);
@@ -444,18 +481,61 @@ export default function JustinSchedule() {
     setEditValues({ activity: '', duration: 0, time: '' });
   };
 
-  // Get the actual schedule items (with or without transitions)
+  // Delete an item
+  const deleteItem = (itemId) => {
+    if (confirm('Delete this activity?')) {
+      const updatedSchedule = { ...schedule };
+      const dayItems = updatedSchedule[selectedDay].filter(i => i.id !== itemId);
+      updatedSchedule[selectedDay] = recalculateTimes(dayItems, dayStartTimes[selectedDay]);
+      setSchedule(updatedSchedule);
+      setHasChanges(true);
+    }
+  };
+
+  // Add new item
+  const addNewItem = () => {
+    if (!newItem.activity.trim()) {
+      alert('Please enter an activity name');
+      return;
+    }
+    
+    const updatedSchedule = { ...schedule };
+    const dayItems = [...updatedSchedule[selectedDay]];
+    
+    // Generate unique ID
+    const dayPrefix = selectedDay.slice(0, 3).toLowerCase();
+    const maxId = dayItems.reduce((max, item) => {
+      const match = item.id.match(new RegExp(`${dayPrefix}-(\\d+)`));
+      return match ? Math.max(max, parseInt(match[1])) : max;
+    }, 0);
+    
+    const newActivity = {
+      id: `${dayPrefix}-${maxId + 1}`,
+      time: '', // Will be calculated
+      activity: newItem.activity,
+      duration: newItem.duration,
+      category: newItem.category,
+    };
+    
+    dayItems.push(newActivity);
+    updatedSchedule[selectedDay] = recalculateTimes(dayItems, dayStartTimes[selectedDay]);
+    setSchedule(updatedSchedule);
+    setHasChanges(true);
+    setShowAddForm(false);
+    setNewItem({ activity: '', duration: 30, category: 'Personal' });
+  };
+
+  // Get display items
   const getDisplayItems = () => {
     const items = schedule[selectedDay];
     return showTransitions ? items : items.filter(item => item.category !== 'Transition');
   };
 
-  // Handle drag start
+  // Drag handlers
   const handleDragStart = (e, index) => {
     const items = getDisplayItems();
     const item = items[index];
     
-    // Don't allow dragging transitions or while editing
     if (item.category === 'Transition' || editingItem) return;
     
     setDraggedItem({ index, item });
@@ -481,7 +561,6 @@ export default function JustinSchedule() {
     e.preventDefault();
     const items = getDisplayItems();
     
-    // Don't allow dropping on transitions
     if (items[index].category === 'Transition') return;
     
     if (draggedItem && draggedItem.index !== index) {
@@ -500,29 +579,13 @@ export default function JustinSchedule() {
     const displayItems = getDisplayItems();
     const fullItems = [...schedule[selectedDay]];
     
-    // Find actual indices in full array
     const draggedFullIndex = fullItems.findIndex(i => i.id === displayItems[draggedItem.index].id);
     const dropFullIndex = fullItems.findIndex(i => i.id === displayItems[dropIndex].id);
     
-    // Remove dragged item
     const [removed] = fullItems.splice(draggedFullIndex, 1);
-    
-    // Insert at new position
     const adjustedDropIndex = draggedFullIndex < dropFullIndex ? dropFullIndex - 1 : dropFullIndex;
     fullItems.splice(adjustedDropIndex + 1, 0, removed);
     
-    // Determine start time based on day
-    const dayStartTimes = {
-      Monday: '5:45 AM',
-      Tuesday: '5:45 AM',
-      Wednesday: '5:45 AM',
-      Thursday: '5:45 AM',
-      Friday: '5:45 AM',
-      Saturday: '6:30 AM',
-      Sunday: '7:00 AM',
-    };
-    
-    // Recalculate times
     const updatedItems = recalculateTimes(fullItems, dayStartTimes[selectedDay]);
     
     setSchedule(prev => ({
@@ -571,6 +634,13 @@ export default function JustinSchedule() {
     return `${hours}h ${mins}m`;
   };
 
+  // Check if an item is the current activity
+  const isCurrentActivity = (item) => {
+    if (!currentActivity) return false;
+    const todayName = days[currentTime.getDay() === 0 ? 6 : currentTime.getDay() - 1];
+    return selectedDay === todayName && currentActivity.current?.id === item.id;
+  };
+
   const themeClasses = darkMode 
     ? 'bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white'
     : 'bg-gradient-to-br from-gray-50 via-white to-gray-100 text-gray-900';
@@ -588,6 +658,32 @@ export default function JustinSchedule() {
   return (
     <div className={`min-h-screen ${themeClasses} p-4`}>
       <div className="max-w-4xl mx-auto">
+        {/* Current Activity Banner */}
+        {currentActivity && currentActivity.current && (
+          <div className={`${darkMode ? 'bg-gradient-to-r from-green-900/80 to-emerald-900/80 border-green-600' : 'bg-gradient-to-r from-green-100 to-emerald-100 border-green-400'} border rounded-2xl p-4 mb-4`}>
+            <div className="flex items-center gap-3">
+              <div className={`w-12 h-12 rounded-xl ${categories[currentActivity.current.category]?.color || 'bg-green-500'} flex items-center justify-center animate-pulse`}>
+                <Play className="w-6 h-6 text-white" />
+              </div>
+              <div className="flex-1">
+                <p className={`text-xs font-medium ${darkMode ? 'text-green-400' : 'text-green-700'} uppercase tracking-wide`}>
+                  NOW: {currentActivity.minutesRemaining}m remaining
+                </p>
+                <p className="text-lg font-bold">{currentActivity.current.activity}</p>
+                {currentActivity.next && (
+                  <p className={`text-sm ${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>
+                    Up next: {currentActivity.next.activity}
+                  </p>
+                )}
+              </div>
+              <div className={`text-right ${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>
+                <p className="text-sm">{currentActivity.current.time}</p>
+                <p className="text-xs">{formatDuration(currentActivity.current.duration)}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Header */}
         <div className={`${cardClasses} rounded-2xl p-6 mb-4`}>
           <div className="flex items-center justify-between mb-4">
@@ -667,21 +763,27 @@ export default function JustinSchedule() {
             </button>
             
             <div className="flex-1 flex gap-1 overflow-x-auto pb-2">
-              {days.map((day) => (
-                <button
-                  key={day}
-                  onClick={() => setSelectedDay(day)}
-                  className={`px-3 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
-                    selectedDay === day
-                      ? 'bg-blue-600 text-white'
-                      : darkMode 
-                        ? 'bg-slate-700 hover:bg-slate-600' 
-                        : 'bg-gray-200 hover:bg-gray-300'
-                  }`}
-                >
-                  {day.slice(0, 3)}
-                </button>
-              ))}
+              {days.map((day) => {
+                const isToday = day === days[currentTime.getDay() === 0 ? 6 : currentTime.getDay() - 1];
+                return (
+                  <button
+                    key={day}
+                    onClick={() => setSelectedDay(day)}
+                    className={`px-3 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap relative ${
+                      selectedDay === day
+                        ? 'bg-blue-600 text-white'
+                        : darkMode 
+                          ? 'bg-slate-700 hover:bg-slate-600' 
+                          : 'bg-gray-200 hover:bg-gray-300'
+                    }`}
+                  >
+                    {day.slice(0, 3)}
+                    {isToday && (
+                      <span className="absolute -top-1 -right-1 w-2 h-2 bg-green-500 rounded-full" />
+                    )}
+                  </button>
+                );
+              })}
             </div>
 
             <button
@@ -704,14 +806,22 @@ export default function JustinSchedule() {
               </p>
             </div>
             <div className="flex items-center gap-4">
-              <p className={`text-xs ${darkMode ? 'text-slate-500' : 'text-gray-400'}`}>
-                <Edit2 className="w-3 h-3 inline mr-1" />
-                Tap to edit • <GripVertical className="w-3 h-3 inline mr-1" />
-                Drag to reorder
-              </p>
+              <button
+                onClick={() => setShowAddForm(!showAddForm)}
+                className={`px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-1 ${
+                  showAddForm 
+                    ? 'bg-blue-600 text-white' 
+                    : darkMode 
+                      ? 'bg-slate-700 hover:bg-slate-600' 
+                      : 'bg-gray-200 hover:bg-gray-300'
+                }`}
+              >
+                <Plus className="w-4 h-4" />
+                Add Activity
+              </button>
               <label className="flex items-center gap-2 cursor-pointer">
                 <span className={`text-sm ${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>
-                  Show transitions
+                  Transitions
                 </span>
                 <input
                   type="checkbox"
@@ -724,6 +834,92 @@ export default function JustinSchedule() {
           </div>
         </div>
 
+        {/* Add New Activity Form */}
+        {showAddForm && (
+          <div className={`${cardClasses} rounded-2xl p-4 mb-4`}>
+            <h3 className="font-bold mb-3 flex items-center gap-2">
+              <Plus className="w-5 h-5 text-blue-500" />
+              Add New Activity
+            </h3>
+            <div className="space-y-3">
+              <div>
+                <label className={`block text-xs mb-1 ${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>Activity Name</label>
+                <input
+                  type="text"
+                  value={newItem.activity}
+                  onChange={(e) => setNewItem({ ...newItem, activity: e.target.value })}
+                  placeholder="e.g., 🎯 New Task"
+                  className={`w-full px-3 py-2 rounded-lg border ${inputClasses}`}
+                />
+              </div>
+              <div>
+                <label className={`block text-xs mb-1 ${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>Duration</label>
+                <div className="flex flex-wrap gap-1 mb-2">
+                  {durationPresets.map((d) => (
+                    <button
+                      key={d}
+                      onClick={() => setNewItem({ ...newItem, duration: d })}
+                      className={`px-2 py-1 rounded text-xs ${
+                        newItem.duration === d 
+                          ? 'bg-blue-500 text-white' 
+                          : darkMode 
+                            ? 'bg-slate-700 hover:bg-slate-600' 
+                            : 'bg-gray-200 hover:bg-gray-300'
+                      }`}
+                    >
+                      {d}m
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="number"
+                  value={newItem.duration}
+                  onChange={(e) => setNewItem({ ...newItem, duration: parseInt(e.target.value) || 0 })}
+                  className={`w-24 px-2 py-1 rounded border ${inputClasses} text-sm`}
+                  min="1"
+                  max="480"
+                />
+                <span className={`ml-2 text-sm ${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>minutes</span>
+              </div>
+              <div>
+                <label className={`block text-xs mb-1 ${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>Category</label>
+                <div className="flex flex-wrap gap-1">
+                  {categoryList.map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setNewItem({ ...newItem, category: cat })}
+                      className={`px-2 py-1 rounded text-xs flex items-center gap-1 ${
+                        newItem.category === cat 
+                          ? `${categories[cat].color} text-white` 
+                          : darkMode 
+                            ? 'bg-slate-700 hover:bg-slate-600' 
+                            : 'bg-gray-200 hover:bg-gray-300'
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex gap-2 justify-end pt-2">
+                <button
+                  onClick={() => setShowAddForm(false)}
+                  className={`px-4 py-2 rounded-lg text-sm ${darkMode ? 'bg-slate-700 hover:bg-slate-600' : 'bg-gray-200 hover:bg-gray-300'}`}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={addNewItem}
+                  className="px-4 py-2 rounded-lg text-sm bg-blue-600 hover:bg-blue-500 text-white flex items-center gap-1"
+                >
+                  <Plus className="w-4 h-4" />
+                  Add to End
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Schedule with Drag & Drop and Inline Editing */}
         <div className={`${cardClasses} rounded-2xl p-4 mb-4`}>
           <div className="space-y-2">
@@ -734,6 +930,7 @@ export default function JustinSchedule() {
               const isDragging = draggedItem?.index === index;
               const isDragOver = dragOverIndex === index;
               const isEditing = editingItem === item.id;
+              const isCurrent = isCurrentActivity(item);
               
               return (
                 <div
@@ -749,13 +946,17 @@ export default function JustinSchedule() {
                         ? darkMode
                           ? 'bg-slate-600 border-2 border-blue-500'
                           : 'bg-blue-50 border-2 border-blue-500'
-                        : item.special 
-                          ? darkMode 
-                            ? 'bg-gradient-to-r from-yellow-900/30 to-orange-900/30 border border-yellow-600/50' 
-                            : 'bg-gradient-to-r from-yellow-50 to-orange-50 border border-yellow-300'
-                          : darkMode 
-                            ? 'bg-slate-700/50 hover:bg-slate-700' 
-                            : 'bg-gray-100 hover:bg-gray-200'
+                        : isCurrent
+                          ? darkMode
+                            ? 'bg-gradient-to-r from-green-900/50 to-emerald-900/50 border-2 border-green-500 shadow-lg shadow-green-500/20'
+                            : 'bg-gradient-to-r from-green-100 to-emerald-100 border-2 border-green-400'
+                          : item.special 
+                            ? darkMode 
+                              ? 'bg-gradient-to-r from-yellow-900/30 to-orange-900/30 border border-yellow-600/50' 
+                              : 'bg-gradient-to-r from-yellow-50 to-orange-50 border border-yellow-300'
+                            : darkMode 
+                              ? 'bg-slate-700/50 hover:bg-slate-700' 
+                              : 'bg-gray-100 hover:bg-gray-200'
                   } ${!isTransition && !isEditing ? 'cursor-grab active:cursor-grabbing' : ''} ${isDragging ? 'opacity-50' : ''}`}
                 >
                   {/* Drag Handle */}
@@ -766,23 +967,21 @@ export default function JustinSchedule() {
                   )}
                   {(isTransition || isEditing) && <div className="w-5" />}
                   
-                  <div className={`w-10 h-10 rounded-lg ${catInfo.color} flex items-center justify-center flex-shrink-0`}>
+                  <div className={`w-10 h-10 rounded-lg ${catInfo.color} flex items-center justify-center flex-shrink-0 ${isCurrent ? 'animate-pulse' : ''}`}>
                     <Icon className="w-5 h-5 text-white" />
                   </div>
                   
                   {isEditing ? (
                     // Edit Mode
                     <div className="flex-1 flex flex-col gap-2">
-                      <div className="flex gap-2 items-center">
-                        <input
-                          type="text"
-                          value={editValues.activity}
-                          onChange={(e) => setEditValues({ ...editValues, activity: e.target.value })}
-                          className={`flex-1 px-3 py-2 rounded-lg border ${inputClasses} text-sm font-medium`}
-                          placeholder="Activity name"
-                          autoFocus
-                        />
-                      </div>
+                      <input
+                        type="text"
+                        value={editValues.activity}
+                        onChange={(e) => setEditValues({ ...editValues, activity: e.target.value })}
+                        className={`w-full px-3 py-2 rounded-lg border ${inputClasses} text-sm font-medium`}
+                        placeholder="Activity name"
+                        autoFocus
+                      />
                       <div className="flex gap-2 items-center flex-wrap">
                         <div className="flex items-center gap-1">
                           <Clock className="w-4 h-4 text-blue-500" />
@@ -796,23 +995,21 @@ export default function JustinSchedule() {
                         </div>
                         <div className="flex items-center gap-1">
                           <span className={`text-xs ${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>Duration:</span>
-                          <div className="flex gap-1">
-                            {durationPresets.slice(0, 4).map(d => (
-                              <button
-                                key={d}
-                                onClick={() => setEditValues({ ...editValues, duration: d })}
-                                className={`px-2 py-1 rounded text-xs ${
-                                  editValues.duration === d 
-                                    ? 'bg-blue-500 text-white' 
-                                    : darkMode 
-                                      ? 'bg-slate-600 hover:bg-slate-500' 
-                                      : 'bg-gray-200 hover:bg-gray-300'
-                                }`}
-                              >
-                                {d}m
-                              </button>
-                            ))}
-                          </div>
+                          {durationPresets.slice(0, 4).map(d => (
+                            <button
+                              key={d}
+                              onClick={() => setEditValues({ ...editValues, duration: d })}
+                              className={`px-2 py-1 rounded text-xs ${
+                                editValues.duration === d 
+                                  ? 'bg-blue-500 text-white' 
+                                  : darkMode 
+                                    ? 'bg-slate-600 hover:bg-slate-500' 
+                                    : 'bg-gray-200 hover:bg-gray-300'
+                              }`}
+                            >
+                              {d}m
+                            </button>
+                          ))}
                           <input
                             type="number"
                             value={editValues.duration}
@@ -821,10 +1018,16 @@ export default function JustinSchedule() {
                             min="1"
                             max="480"
                           />
-                          <span className={`text-xs ${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>min</span>
                         </div>
                       </div>
                       <div className="flex gap-2 justify-end">
+                        <button
+                          onClick={() => deleteItem(item.id)}
+                          className="px-3 py-1 rounded-lg text-sm bg-red-600 hover:bg-red-500 text-white flex items-center gap-1"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          Delete
+                        </button>
                         <button
                           onClick={cancelEdit}
                           className={`px-3 py-1 rounded-lg text-sm flex items-center gap-1 ${
@@ -854,8 +1057,10 @@ export default function JustinSchedule() {
                           {item.activity}
                         </span>
                         {item.special && <Star className="w-4 h-4 text-yellow-500 flex-shrink-0" />}
-                        {!isTransition && (
-                          <Edit2 className={`w-3 h-3 ${darkMode ? 'text-slate-500' : 'text-gray-400'} opacity-0 group-hover:opacity-100 hover:text-blue-500`} />
+                        {isCurrent && (
+                          <span className="px-2 py-0.5 rounded-full text-xs bg-green-500 text-white font-medium animate-pulse">
+                            NOW
+                          </span>
                         )}
                       </div>
                       <div className={`text-sm ${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>
@@ -936,4 +1141,3 @@ export default function JustinSchedule() {
     </div>
   );
 }
-
