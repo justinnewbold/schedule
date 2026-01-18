@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronLeft, ChevronRight, Clock, Coffee, Briefcase, Home, Gamepad2, Music, BookOpen, Heart, Printer, Moon, Sun, Star, Calendar, CheckCircle2, GripVertical, Save, RotateCcw } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Clock, Coffee, Briefcase, Home, Gamepad2, Music, BookOpen, Heart, Printer, Moon, Sun, Star, Calendar, CheckCircle2, GripVertical, Save, RotateCcw, Edit2, Check, X } from 'lucide-react';
 
 const categories = {
   'Morning': { color: 'bg-amber-500', icon: Coffee },
@@ -284,6 +284,9 @@ const recalculateTimes = (items, startTime = '5:45 AM') => {
   });
 };
 
+// Duration preset options
+const durationPresets = [5, 10, 15, 30, 45, 60, 90, 120];
+
 export default function JustinSchedule() {
   const [selectedDay, setSelectedDay] = useState('Monday');
   const [showTransitions, setShowTransitions] = useState(false);
@@ -291,6 +294,10 @@ export default function JustinSchedule() {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [schedule, setSchedule] = useState(initialSchedule);
   const [hasChanges, setHasChanges] = useState(false);
+  
+  // Edit state
+  const [editingItem, setEditingItem] = useState(null);
+  const [editValues, setEditValues] = useState({ activity: '', duration: 0, time: '' });
   
   // Drag state
   const [draggedItem, setDraggedItem] = useState(null);
@@ -327,6 +334,56 @@ export default function JustinSchedule() {
     }
   };
 
+  // Start editing an item
+  const startEdit = (item) => {
+    setEditingItem(item.id);
+    setEditValues({
+      activity: item.activity,
+      duration: item.duration,
+      time: item.time
+    });
+  };
+
+  // Cancel editing
+  const cancelEdit = () => {
+    setEditingItem(null);
+    setEditValues({ activity: '', duration: 0, time: '' });
+  };
+
+  // Save edit
+  const saveEdit = (itemId) => {
+    const updatedSchedule = { ...schedule };
+    const dayItems = [...updatedSchedule[selectedDay]];
+    const itemIndex = dayItems.findIndex(i => i.id === itemId);
+    
+    if (itemIndex !== -1) {
+      dayItems[itemIndex] = {
+        ...dayItems[itemIndex],
+        activity: editValues.activity,
+        duration: editValues.duration,
+        time: editValues.time
+      };
+      
+      // Recalculate times from the edited item onwards
+      const dayStartTimes = {
+        Monday: '5:45 AM',
+        Tuesday: '5:45 AM',
+        Wednesday: '5:45 AM',
+        Thursday: '5:45 AM',
+        Friday: '5:45 AM',
+        Saturday: '6:30 AM',
+        Sunday: '7:00 AM',
+      };
+      
+      updatedSchedule[selectedDay] = recalculateTimes(dayItems, dayStartTimes[selectedDay]);
+      setSchedule(updatedSchedule);
+      setHasChanges(true);
+    }
+    
+    setEditingItem(null);
+    setEditValues({ activity: '', duration: 0, time: '' });
+  };
+
   // Get the actual schedule items (with or without transitions)
   const getDisplayItems = () => {
     const items = schedule[selectedDay];
@@ -338,8 +395,8 @@ export default function JustinSchedule() {
     const items = getDisplayItems();
     const item = items[index];
     
-    // Don't allow dragging transitions
-    if (item.category === 'Transition') return;
+    // Don't allow dragging transitions or while editing
+    if (item.category === 'Transition' || editingItem) return;
     
     setDraggedItem({ index, item });
     dragNode.current = e.target;
@@ -462,6 +519,10 @@ export default function JustinSchedule() {
     ? 'bg-slate-800/80 backdrop-blur border border-slate-700' 
     : 'bg-white/90 backdrop-blur shadow-lg border border-gray-200';
 
+  const inputClasses = darkMode
+    ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400'
+    : 'bg-white border-gray-300 text-gray-900 placeholder-gray-400';
+
   const dayIndex = days.indexOf(selectedDay);
 
   return (
@@ -555,7 +616,8 @@ export default function JustinSchedule() {
             </div>
             <div className="flex items-center gap-4">
               <p className={`text-xs ${darkMode ? 'text-slate-500' : 'text-gray-400'}`}>
-                <GripVertical className="w-3 h-3 inline mr-1" />
+                <Edit2 className="w-3 h-3 inline mr-1" />
+                Tap to edit • <GripVertical className="w-3 h-3 inline mr-1" />
                 Drag to reorder
               </p>
               <label className="flex items-center gap-2 cursor-pointer">
@@ -573,7 +635,7 @@ export default function JustinSchedule() {
           </div>
         </div>
 
-        {/* Schedule with Drag & Drop */}
+        {/* Schedule with Drag & Drop and Inline Editing */}
         <div className={`${cardClasses} rounded-2xl p-4 mb-4`}>
           <div className="space-y-2">
             {filteredSchedule.map((item, index) => {
@@ -582,49 +644,136 @@ export default function JustinSchedule() {
               const isTransition = item.category === 'Transition';
               const isDragging = draggedItem?.index === index;
               const isDragOver = dragOverIndex === index;
+              const isEditing = editingItem === item.id;
               
               return (
                 <div
                   key={item.id}
-                  draggable={!isTransition}
+                  draggable={!isTransition && !isEditing}
                   onDragStart={(e) => handleDragStart(e, index)}
                   onDragOver={(e) => handleDragOver(e, index)}
                   onDrop={(e) => handleDrop(e, index)}
                   className={`flex items-center gap-3 p-3 rounded-xl transition-all ${
                     isDragOver 
                       ? 'border-2 border-blue-500 border-dashed'
-                      : item.special 
-                        ? darkMode 
-                          ? 'bg-gradient-to-r from-yellow-900/30 to-orange-900/30 border border-yellow-600/50' 
-                          : 'bg-gradient-to-r from-yellow-50 to-orange-50 border border-yellow-300'
-                        : darkMode 
-                          ? 'bg-slate-700/50 hover:bg-slate-700' 
-                          : 'bg-gray-100 hover:bg-gray-200'
-                  } ${!isTransition ? 'cursor-grab active:cursor-grabbing' : ''} ${isDragging ? 'opacity-50' : ''}`}
+                      : isEditing
+                        ? darkMode
+                          ? 'bg-slate-600 border-2 border-blue-500'
+                          : 'bg-blue-50 border-2 border-blue-500'
+                        : item.special 
+                          ? darkMode 
+                            ? 'bg-gradient-to-r from-yellow-900/30 to-orange-900/30 border border-yellow-600/50' 
+                            : 'bg-gradient-to-r from-yellow-50 to-orange-50 border border-yellow-300'
+                          : darkMode 
+                            ? 'bg-slate-700/50 hover:bg-slate-700' 
+                            : 'bg-gray-100 hover:bg-gray-200'
+                  } ${!isTransition && !isEditing ? 'cursor-grab active:cursor-grabbing' : ''} ${isDragging ? 'opacity-50' : ''}`}
                 >
                   {/* Drag Handle */}
-                  {!isTransition && (
+                  {!isTransition && !isEditing && (
                     <div className={`${darkMode ? 'text-slate-500' : 'text-gray-400'} hover:text-blue-500 transition-colors`}>
                       <GripVertical className="w-5 h-5" />
                     </div>
                   )}
-                  {isTransition && <div className="w-5" />}
+                  {(isTransition || isEditing) && <div className="w-5" />}
                   
                   <div className={`w-10 h-10 rounded-lg ${catInfo.color} flex items-center justify-center flex-shrink-0`}>
                     <Icon className="w-5 h-5 text-white" />
                   </div>
                   
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium truncate">
-                        {item.activity}
-                      </span>
-                      {item.special && <Star className="w-4 h-4 text-yellow-500 flex-shrink-0" />}
+                  {isEditing ? (
+                    // Edit Mode
+                    <div className="flex-1 flex flex-col gap-2">
+                      <div className="flex gap-2 items-center">
+                        <input
+                          type="text"
+                          value={editValues.activity}
+                          onChange={(e) => setEditValues({ ...editValues, activity: e.target.value })}
+                          className={`flex-1 px-3 py-2 rounded-lg border ${inputClasses} text-sm font-medium`}
+                          placeholder="Activity name"
+                          autoFocus
+                        />
+                      </div>
+                      <div className="flex gap-2 items-center flex-wrap">
+                        <div className="flex items-center gap-1">
+                          <Clock className="w-4 h-4 text-blue-500" />
+                          <input
+                            type="text"
+                            value={editValues.time}
+                            onChange={(e) => setEditValues({ ...editValues, time: e.target.value })}
+                            className={`w-24 px-2 py-1 rounded border ${inputClasses} text-xs`}
+                            placeholder="e.g. 9:00 AM"
+                          />
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className={`text-xs ${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>Duration:</span>
+                          <div className="flex gap-1">
+                            {durationPresets.slice(0, 4).map(d => (
+                              <button
+                                key={d}
+                                onClick={() => setEditValues({ ...editValues, duration: d })}
+                                className={`px-2 py-1 rounded text-xs ${
+                                  editValues.duration === d 
+                                    ? 'bg-blue-500 text-white' 
+                                    : darkMode 
+                                      ? 'bg-slate-600 hover:bg-slate-500' 
+                                      : 'bg-gray-200 hover:bg-gray-300'
+                                }`}
+                              >
+                                {d}m
+                              </button>
+                            ))}
+                          </div>
+                          <input
+                            type="number"
+                            value={editValues.duration}
+                            onChange={(e) => setEditValues({ ...editValues, duration: parseInt(e.target.value) || 0 })}
+                            className={`w-16 px-2 py-1 rounded border ${inputClasses} text-xs`}
+                            min="1"
+                            max="480"
+                          />
+                          <span className={`text-xs ${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>min</span>
+                        </div>
+                      </div>
+                      <div className="flex gap-2 justify-end">
+                        <button
+                          onClick={cancelEdit}
+                          className={`px-3 py-1 rounded-lg text-sm flex items-center gap-1 ${
+                            darkMode ? 'bg-slate-600 hover:bg-slate-500' : 'bg-gray-200 hover:bg-gray-300'
+                          }`}
+                        >
+                          <X className="w-4 h-4" />
+                          Cancel
+                        </button>
+                        <button
+                          onClick={() => saveEdit(item.id)}
+                          className="px-3 py-1 rounded-lg text-sm bg-blue-600 hover:bg-blue-500 text-white flex items-center gap-1"
+                        >
+                          <Check className="w-4 h-4" />
+                          Save
+                        </button>
+                      </div>
                     </div>
-                    <div className={`text-sm ${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>
-                      {item.time} • {formatDuration(item.duration)}
+                  ) : (
+                    // View Mode
+                    <div 
+                      className="flex-1 min-w-0 cursor-pointer"
+                      onClick={() => !isTransition && startEdit(item)}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium truncate">
+                          {item.activity}
+                        </span>
+                        {item.special && <Star className="w-4 h-4 text-yellow-500 flex-shrink-0" />}
+                        {!isTransition && (
+                          <Edit2 className={`w-3 h-3 ${darkMode ? 'text-slate-500' : 'text-gray-400'} opacity-0 group-hover:opacity-100 hover:text-blue-500`} />
+                        )}
+                      </div>
+                      <div className={`text-sm ${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>
+                        {item.time} • {formatDuration(item.duration)}
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
               );
             })}
