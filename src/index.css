@@ -2,11 +2,293 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================ */
+/* ROOT VARIABLES */
+/* ============================================ */
+:root {
+  --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* ============================================ */
+/* BASE STYLES */
+/* ============================================ */
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior: none;
 }
 
 #root {
   min-height: 100vh;
+}
+
+/* ============================================ */
+/* CUSTOM SCROLLBAR */
+/* ============================================ */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Custom styled scrollbar for larger screens */
+@media (min-width: 768px) {
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+  }
+}
+
+/* ============================================ */
+/* SAFE AREA */
+/* ============================================ */
+.safe-area-bottom {
+  padding-bottom: max(0.5rem, var(--safe-area-inset-bottom));
+}
+
+/* ============================================ */
+/* ANIMATIONS */
+/* ============================================ */
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-10px) scale(1.02);
+  }
+}
+
+@keyframes glow {
+  0%, 100% {
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 40px rgba(59, 130, 246, 0.5);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.8);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+/* Animation utility classes */
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+.animate-glow {
+  animation: glow 2s ease-in-out infinite;
+}
+
+.animate-shimmer {
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+  background-size: 200% 100%;
+  animation: shimmer 2s infinite;
+}
+
+.animate-slide-up {
+  animation: slideUp 0.4s ease-out forwards;
+}
+
+.animate-slide-in {
+  animation: slideIn 0.3s ease-out forwards;
+}
+
+.animate-scale-in {
+  animation: scaleIn 0.3s ease-out forwards;
+}
+
+.animate-pulse-ring {
+  animation: pulse-ring 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+}
+
+/* ============================================ */
+/* GLASSMORPHISM */
+/* ============================================ */
+.glass {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.glass-light {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+}
+
+/* ============================================ */
+/* INTERACTIVE ELEMENTS */
+/* ============================================ */
+/* Touch feedback for mobile */
+@media (hover: none) {
+  .touch-feedback:active {
+    transform: scale(0.98);
+    opacity: 0.8;
+  }
+}
+
+/* Improved focus states */
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid rgba(59, 130, 246, 0.5);
+  outline-offset: 2px;
+}
+
+/* ============================================ */
+/* DRAG AND DROP */
+/* ============================================ */
+.drag-ghost {
+  opacity: 0.5;
+  transform: scale(1.02);
+}
+
+.drop-target {
+  background: rgba(59, 130, 246, 0.1);
+  border: 2px dashed rgba(59, 130, 246, 0.5);
+}
+
+/* ============================================ */
+/* TRANSITIONS */
+/* ============================================ */
+* {
+  transition-property: color, background-color, border-color, fill, stroke, opacity, box-shadow, transform, filter, backdrop-filter;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+
+/* Disable transitions for elements that shouldn't animate */
+.no-transition,
+.no-transition * {
+  transition: none !important;
+}
+
+/* ============================================ */
+/* TYPOGRAPHY */
+/* ============================================ */
+.text-gradient {
+  background: linear-gradient(to right, var(--tw-gradient-from), var(--tw-gradient-to));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ============================================ */
+/* RESPONSIVE ADJUSTMENTS */
+/* ============================================ */
+@media (max-width: 640px) {
+  /* Larger touch targets on mobile */
+  button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  
+  input {
+    font-size: 16px; /* Prevent zoom on iOS */
+  }
+}
+
+/* ============================================ */
+/* PWA ENHANCEMENTS */
+/* ============================================ */
+@media (display-mode: standalone) {
+  /* Styles for when app is installed */
+  body {
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  
+  /* Allow text selection in inputs */
+  input,
+  textarea {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+}
+
+/* ============================================ */
+/* PRINT STYLES */
+/* ============================================ */
+@media print {
+  body {
+    background: white !important;
+  }
+  
+  .no-print {
+    display: none !important;
+  }
 }
