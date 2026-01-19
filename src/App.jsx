@@ -892,6 +892,7 @@ export default function JustinSchedule() {
         {/* SETTINGS VIEW */}
         {/* ===================================== */}
         {view === 'settings' && (
+          <>
           <GlassCard darkMode={darkMode} className="mb-4">
             <div className="p-5">
               <h3 className={`text-lg font-bold mb-4 flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
@@ -1019,6 +1020,7 @@ export default function JustinSchedule() {
               </div>
             </div>
           </GlassCard>
+          </>
         )}
 
         {/* ===================================== */}
