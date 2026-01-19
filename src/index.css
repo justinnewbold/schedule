@@ -7,6 +7,9 @@
 /* ============================================ */
 :root {
   --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
+  --drag-lift-scale: 1.03;
+  --drag-lift-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+  --drag-lift-rotation: 1deg;
 }
 
 /* ============================================ */
@@ -143,6 +146,236 @@ body {
   }
 }
 
+/* ============================================ */
+/* DRAG AND DROP ANIMATIONS - ENHANCED */
+/* ============================================ */
+
+/* Drag Lift Animation - Item being picked up */
+@keyframes dragLift {
+  0% {
+    transform: scale(1) rotate(0deg);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  }
+  100% {
+    transform: scale(var(--drag-lift-scale)) rotate(var(--drag-lift-rotation));
+    box-shadow: var(--drag-lift-shadow);
+  }
+}
+
+/* Drag Float Animation - Subtle floating while dragging */
+@keyframes dragFloat {
+  0%, 100% {
+    transform: scale(var(--drag-lift-scale)) rotate(var(--drag-lift-rotation)) translateY(0px);
+  }
+  50% {
+    transform: scale(var(--drag-lift-scale)) rotate(calc(var(--drag-lift-rotation) * -1)) translateY(-3px);
+  }
+}
+
+/* Drop Settle Animation - Item settling into new position */
+@keyframes dropSettle {
+  0% {
+    transform: scale(var(--drag-lift-scale)) rotate(var(--drag-lift-rotation));
+    box-shadow: var(--drag-lift-shadow);
+  }
+  50% {
+    transform: scale(0.98) rotate(0deg);
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  }
+}
+
+/* Drop Zone Pulse Animation */
+@keyframes dropZonePulse {
+  0%, 100% {
+    border-color: rgba(59, 130, 246, 0.3);
+    background-color: rgba(59, 130, 246, 0.05);
+  }
+  50% {
+    border-color: rgba(59, 130, 246, 0.6);
+    background-color: rgba(59, 130, 246, 0.1);
+  }
+}
+
+/* Slot Open Animation - Space opening for dragged item */
+@keyframes slotOpen {
+  0% {
+    max-height: 0;
+    opacity: 0;
+    margin: 0;
+    padding: 0;
+  }
+  100% {
+    max-height: 80px;
+    opacity: 1;
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+}
+
+/* Items Moving Animation - Items shifting to make room */
+@keyframes itemShift {
+  0% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(5px);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+/* Wiggle Animation - Light wiggle on hover during drag */
+@keyframes wiggle {
+  0%, 100% {
+    transform: rotate(0deg);
+  }
+  25% {
+    transform: rotate(-0.5deg);
+  }
+  75% {
+    transform: rotate(0.5deg);
+  }
+}
+
+/* Bounce Animation for successful drop */
+@keyframes dropBounce {
+  0% {
+    transform: scale(1.03);
+  }
+  40% {
+    transform: scale(0.97);
+  }
+  60% {
+    transform: scale(1.01);
+  }
+  80% {
+    transform: scale(0.99);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Glow pulse for drop zone */
+@keyframes glowPulse {
+  0%, 100% {
+    box-shadow: 0 0 10px rgba(59, 130, 246, 0.2), inset 0 0 10px rgba(59, 130, 246, 0.05);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.4), inset 0 0 15px rgba(59, 130, 246, 0.1);
+  }
+}
+
+/* ============================================ */
+/* DRAG AND DROP CLASSES */
+/* ============================================ */
+
+/* Base draggable item */
+.draggable-item {
+  transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1),
+              box-shadow 0.2s cubic-bezier(0.2, 0, 0, 1),
+              opacity 0.2s ease,
+              background-color 0.2s ease;
+  will-change: transform, box-shadow;
+  touch-action: manipulation;
+}
+
+/* Item being dragged */
+.dragging {
+  animation: dragLift 0.2s cubic-bezier(0.2, 0, 0, 1) forwards;
+  z-index: 1000 !important;
+  pointer-events: none;
+  cursor: grabbing !important;
+}
+
+/* After initial lift, add subtle float */
+.dragging.floating {
+  animation: dragFloat 1.5s ease-in-out infinite;
+}
+
+/* Item just dropped - settling animation */
+.dropped {
+  animation: dropBounce 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+/* Item settling after reorder */
+.settling {
+  animation: dropSettle 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+/* Drop target zone - where item will land */
+.drop-target {
+  position: relative;
+  animation: dropZonePulse 1s ease-in-out infinite;
+  border: 2px dashed rgba(59, 130, 246, 0.5) !important;
+  border-radius: 0.75rem;
+}
+
+/* Enhanced drop target with glow */
+.drop-target-glow {
+  animation: glowPulse 1s ease-in-out infinite;
+  border: 2px dashed currentColor !important;
+}
+
+/* Drop zone indicator */
+.drop-indicator {
+  height: 3px;
+  background: linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.8), transparent);
+  border-radius: 2px;
+  transform: scaleX(0);
+  transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.drop-indicator.active {
+  transform: scaleX(1);
+}
+
+/* Items shifting to make room */
+.shifting-down {
+  transform: translateY(10px);
+  transition: transform 0.3s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.shifting-up {
+  transform: translateY(-10px);
+  transition: transform 0.3s cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* Placeholder for dragged item's original position */
+.drag-placeholder {
+  background: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 5px,
+    rgba(59, 130, 246, 0.05) 5px,
+    rgba(59, 130, 246, 0.05) 10px
+  );
+  border: 2px dashed rgba(59, 130, 246, 0.3);
+  border-radius: 0.75rem;
+  opacity: 0.5;
+}
+
+/* Hover effect during drag */
+.drag-hover {
+  animation: wiggle 0.3s ease-in-out;
+  background-color: rgba(59, 130, 246, 0.1) !important;
+}
+
+/* Touch device specific styles */
+@media (hover: none) {
+  .draggable-item:active {
+    transform: scale(0.98);
+  }
+  
+  .dragging {
+    opacity: 0.9;
+  }
+}
+
 /* Animation utility classes */
 .animate-float {
   animation: float 3s ease-in-out infinite;
@@ -172,6 +405,10 @@ body {
 
 .animate-pulse-ring {
   animation: pulse-ring 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+}
+
+.animate-drop-bounce {
+  animation: dropBounce 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 /* ============================================ */
@@ -210,16 +447,11 @@ input:focus-visible {
 }
 
 /* ============================================ */
-/* DRAG AND DROP */
+/* LEGACY DRAG AND DROP (keeping for compatibility) */
 /* ============================================ */
 .drag-ghost {
   opacity: 0.5;
   transform: scale(1.02);
-}
-
-.drop-target {
-  background: rgba(59, 130, 246, 0.1);
-  border: 2px dashed rgba(59, 130, 246, 0.5);
 }
 
 /* ============================================ */
@@ -229,6 +461,18 @@ input:focus-visible {
   transition-property: color, background-color, border-color, fill, stroke, opacity, box-shadow, transform, filter, backdrop-filter;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   transition-duration: 150ms;
+}
+
+/* Special easing for drag interactions */
+.drag-transition {
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  transition-duration: 200ms;
+}
+
+/* Spring easing for bouncy effects */
+.spring-transition {
+  transition-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition-duration: 300ms;
 }
 
 /* Disable transitions for elements that shouldn't animate */
@@ -259,6 +503,12 @@ input:focus-visible {
   
   input {
     font-size: 16px; /* Prevent zoom on iOS */
+  }
+  
+  /* Reduced lift effect on mobile for better performance */
+  :root {
+    --drag-lift-scale: 1.02;
+    --drag-lift-rotation: 0.5deg;
   }
 }
 
