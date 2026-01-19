@@ -4,7 +4,8 @@ import {
   GripVertical, Save, RotateCcw, Check, X, Plus, Trash2,
   Briefcase, Coffee, Home, Heart, Utensils, Car, Dumbbell, 
   Music, Star, Sparkles, Settings, BarChart3, TrendingUp,
-  Award, Zap, Cloud, CloudOff, Loader2, Palette
+  Award, Zap, Cloud, CloudOff, Loader2, Palette, CalendarCheck,
+  Download, ExternalLink, RefreshCw
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
@@ -240,6 +241,100 @@ const formatMinutesToTime = (totalMinutes) => {
   const period = hours >= 12 ? 'PM' : 'AM';
   hours = hours % 12 || 12;
   return `${hours}:${minutes.toString().padStart(2, '0')} ${period}`;
+};
+
+// Calendar Sync Utilities
+const getNextDayDate = (dayName) => {
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const today = new Date();
+  const todayIndex = today.getDay();
+  const targetIndex = days.indexOf(dayName);
+  let daysUntil = targetIndex - todayIndex;
+  if (daysUntil < 0) daysUntil += 7;
+  if (daysUntil === 0) daysUntil = 0; // If it's today, use today
+  const targetDate = new Date(today);
+  targetDate.setDate(today.getDate() + daysUntil);
+  return targetDate;
+};
+
+const formatDateForCalendar = (date) => {
+  return date.toISOString().split('T')[0].replace(/-/g, '');
+};
+
+const formatTimeForCalendar = (timeStr, date) => {
+  const minutes = parseTimeToMinutes(timeStr);
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  const dateStr = formatDateForCalendar(date);
+  return `${dateStr}T${hours.toString().padStart(2, '0')}${mins.toString().padStart(2, '0')}00`;
+};
+
+const generateICSFile = (schedule, selectedDay = null) => {
+  const daysToExport = selectedDay ? [selectedDay] : Object.keys(schedule);
+  let icsContent = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Justin's Schedule App//EN
+CALSCALE:GREGORIAN
+METHOD:PUBLISH
+X-WR-CALNAME:Schedule App
+`;
+
+  daysToExport.forEach(day => {
+    const activities = schedule[day] || [];
+    const dayDate = getNextDayDate(day);
+    
+    activities.forEach(item => {
+      const startTime = formatTimeForCalendar(item.time, dayDate);
+      const endMinutes = parseTimeToMinutes(item.time) + item.duration;
+      const endTime = formatTimeForCalendar(formatMinutesToTime(endMinutes), dayDate);
+      const uid = `${item.id}-${day}@schedule.newbold.cloud`;
+      
+      icsContent += `BEGIN:VEVENT
+DTSTART:${startTime}
+DTEND:${endTime}
+DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').split('.')[0]}Z
+UID:${uid}
+SUMMARY:${item.activity.replace(/[,;]/g, '')}
+DESCRIPTION:Category: ${item.category}${item.special ? ' (Special Event)' : ''}
+CATEGORIES:${item.category}
+STATUS:CONFIRMED
+END:VEVENT
+`;
+    });
+  });
+
+  icsContent += 'END:VCALENDAR';
+  return icsContent;
+};
+
+const downloadICSFile = (schedule, selectedDay = null) => {
+  const icsContent = generateICSFile(schedule, selectedDay);
+  const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = selectedDay ? `schedule-${selectedDay.toLowerCase()}.ics` : 'schedule-full-week.ics';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
+
+const generateGoogleCalendarLink = (item, day) => {
+  const dayDate = getNextDayDate(day);
+  const startTime = formatTimeForCalendar(item.time, dayDate);
+  const endMinutes = parseTimeToMinutes(item.time) + item.duration;
+  const endTime = formatTimeForCalendar(formatMinutesToTime(endMinutes), dayDate);
+  
+  const params = new URLSearchParams({
+    action: 'TEMPLATE',
+    text: item.activity,
+    dates: `${startTime}/${endTime}`,
+    details: `Category: ${item.category}${item.special ? '\\n⭐ Special Event' : ''}\\n\\nCreated from Schedule App`,
+    ctz: 'America/Denver'
+  });
+  
+  return `https://calendar.google.com/calendar/render?${params.toString()}`;
 };
 
 // Glass Card Component
@@ -827,6 +922,100 @@ export default function JustinSchedule() {
                     <span className={`text-xs ${darkMode ? 'text-white/70' : 'text-gray-600'}`}>{t.name}</span>
                   </button>
                 ))}
+              </div>
+            </div>
+          </GlassCard>
+          
+          {/* Calendar Sync Section */}
+          <GlassCard darkMode={darkMode} className="mb-4">
+            <div className="p-5">
+              <h3 className={`text-lg font-bold mb-4 flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                <CalendarCheck className="w-5 h-5" style={{ color: theme.primary }} />
+                Calendar Sync
+              </h3>
+              
+              <p className={`text-sm mb-4 ${darkMode ? 'text-white/60' : 'text-gray-600'}`}>
+                Export your schedule to Google Calendar or download as an ICS file to import into any calendar app.
+              </p>
+              
+              {/* Export Options */}
+              <div className="space-y-3">
+                {/* Download ICS - Full Week */}
+                <button
+                  onClick={() => downloadICSFile(schedule)}
+                  className={`w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all ${
+                    darkMode 
+                      ? 'bg-white/5 hover:bg-white/10' 
+                      : 'bg-gray-100 hover:bg-gray-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <Download className={`w-5 h-5 ${darkMode ? 'text-white/70' : 'text-gray-600'}`} />
+                    <div className="text-left">
+                      <p className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                        Download Full Week
+                      </p>
+                      <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                        Export all 7 days as ICS file
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight className={`w-4 h-4 ${darkMode ? 'text-white/40' : 'text-gray-400'}`} />
+                </button>
+                
+                {/* Download ICS - Selected Day */}
+                <button
+                  onClick={() => downloadICSFile(schedule, selectedDay)}
+                  className={`w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all ${
+                    darkMode 
+                      ? 'bg-white/5 hover:bg-white/10' 
+                      : 'bg-gray-100 hover:bg-gray-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <Calendar className={`w-5 h-5 ${darkMode ? 'text-white/70' : 'text-gray-600'}`} />
+                    <div className="text-left">
+                      <p className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                        Download {selectedDay}
+                      </p>
+                      <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                        Export selected day only
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight className={`w-4 h-4 ${darkMode ? 'text-white/40' : 'text-gray-400'}`} />
+                </button>
+              </div>
+              
+              {/* Google Calendar Quick Links */}
+              <div className="mt-4 pt-4 border-t border-white/10">
+                <p className={`text-xs font-medium mb-3 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                  QUICK ADD TO GOOGLE CALENDAR
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {(schedule[selectedDay] || []).slice(0, 5).map((item) => (
+                    <a
+                      key={item.id}
+                      href={generateGoogleCalendarLink(item, selectedDay)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all ${
+                        darkMode 
+                          ? 'bg-white/5 hover:bg-white/10 text-white/70' 
+                          : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                      }`}
+                      style={{ borderLeft: `3px solid ${categories[item.category]?.accent || '#64748b'}` }}
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      {item.activity.slice(0, 20)}{item.activity.length > 20 ? '...' : ''}
+                    </a>
+                  ))}
+                  {(schedule[selectedDay] || []).length > 5 && (
+                    <span className={`text-xs ${darkMode ? 'text-white/40' : 'text-gray-400'}`}>
+                      +{(schedule[selectedDay] || []).length - 5} more
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
           </GlassCard>
