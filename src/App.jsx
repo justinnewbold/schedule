@@ -5,7 +5,8 @@ import {
   Briefcase, Coffee, Home, Heart, Utensils, Car, Dumbbell, 
   Music, Star, Sparkles, Settings, BarChart3, TrendingUp,
   Award, Zap, Cloud, CloudOff, Loader2, Palette, CalendarCheck,
-  Download, ExternalLink, RefreshCw
+  Download, ExternalLink, RefreshCw, Copy, Timer, Layers,
+  ChevronUp, ChevronDown, Minus
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
@@ -439,6 +440,30 @@ export default function JustinSchedule() {
   const [draggedItem, setDraggedItem] = useState(null);
   const [dragOverIndex, setDragOverIndex] = useState(null);
   const dragNode = useRef(null);
+  
+  // New state for enhanced features
+  const [swipedItemId, setSwipedItemId] = useState(null);
+  const [showQuickAdd, setShowQuickAdd] = useState(false);
+  const [showCopyModal, setShowCopyModal] = useState(null);
+  const [recentlyAddedId, setRecentlyAddedId] = useState(null);
+  const swipeStartX = useRef(null);
+  const swipeThreshold = 80;
+
+  // Activity Templates for Quick Add
+  const activityTemplates = [
+    { emoji: '☕', name: 'Coffee Break', duration: 15, category: 'Personal' },
+    { emoji: '📞', name: 'Phone Call', duration: 30, category: 'Work' },
+    { emoji: '🏃', name: 'Quick Workout', duration: 30, category: 'Exercise' },
+    { emoji: '🥪', name: 'Snack Break', duration: 15, category: 'Meals' },
+    { emoji: '🧘', name: 'Meditation', duration: 15, category: 'Personal' },
+    { emoji: '📧', name: 'Email Check', duration: 30, category: 'Work' },
+    { emoji: '👨‍💻', name: 'Dev Sprint', duration: 60, category: 'Development' },
+    { emoji: '📊', name: 'Meeting', duration: 60, category: 'Work' },
+    { emoji: '🎸', name: 'Guitar Practice', duration: 30, category: 'Music' },
+    { emoji: '🏠', name: 'Family Time', duration: 60, category: 'Family' },
+    { emoji: '🍽️', name: 'Meal Prep', duration: 45, category: 'Meals' },
+    { emoji: '📚', name: 'Reading', duration: 30, category: 'Personal' },
+  ];
 
   const theme = themes[selectedTheme];
 
@@ -737,6 +762,158 @@ export default function JustinSchedule() {
     setNewItem({ activity: '', duration: 30, category: 'Personal' });
   };
 
+  // Quick Add from Template
+  const quickAddFromTemplate = (template) => {
+    const daySchedule = schedule[selectedDay];
+    const lastItem = daySchedule[daySchedule.length - 1];
+    const newTime = lastItem 
+      ? formatMinutesToTime(parseTimeToMinutes(lastItem.time) + lastItem.duration)
+      : '9:00 AM';
+
+    const newId = generateId();
+    const newActivity = {
+      id: newId,
+      time: newTime,
+      activity: `${template.emoji} ${template.name}`,
+      duration: template.duration,
+      category: template.category
+    };
+
+    setSchedule({
+      ...schedule,
+      [selectedDay]: [...daySchedule, newActivity]
+    });
+    setHasChanges(true);
+    setShowQuickAdd(false);
+    setRecentlyAddedId(newId);
+    setTimeout(() => setRecentlyAddedId(null), 1000);
+  };
+
+  // Find available time gaps
+  const findTimeGaps = useCallback(() => {
+    const daySchedule = schedule[selectedDay] || [];
+    if (daySchedule.length === 0) return [{ start: '9:00 AM', duration: 480 }];
+    
+    const gaps = [];
+    const dayStart = parseTimeToMinutes('6:00 AM');
+    const dayEnd = parseTimeToMinutes('10:00 PM');
+    
+    // Check gap at start of day
+    const firstItem = daySchedule[0];
+    const firstStart = parseTimeToMinutes(firstItem.time);
+    if (firstStart > dayStart) {
+      gaps.push({ 
+        start: formatMinutesToTime(dayStart), 
+        duration: firstStart - dayStart,
+        label: 'Morning slot'
+      });
+    }
+    
+    // Check gaps between items
+    for (let i = 0; i < daySchedule.length - 1; i++) {
+      const currentEnd = parseTimeToMinutes(daySchedule[i].time) + daySchedule[i].duration;
+      const nextStart = parseTimeToMinutes(daySchedule[i + 1].time);
+      if (nextStart > currentEnd && (nextStart - currentEnd) >= 15) {
+        gaps.push({ 
+          start: formatMinutesToTime(currentEnd), 
+          duration: nextStart - currentEnd,
+          label: `After ${daySchedule[i].activity.substring(0, 20)}...`
+        });
+      }
+    }
+    
+    // Check gap at end of day
+    const lastItem = daySchedule[daySchedule.length - 1];
+    const lastEnd = parseTimeToMinutes(lastItem.time) + lastItem.duration;
+    if (lastEnd < dayEnd) {
+      gaps.push({ 
+        start: formatMinutesToTime(lastEnd), 
+        duration: dayEnd - lastEnd,
+        label: 'Evening slot'
+      });
+    }
+    
+    return gaps.filter(g => g.duration >= 15);
+  }, [schedule, selectedDay]);
+
+  // Duplicate Activity
+  const duplicateActivity = (item) => {
+    const daySchedule = schedule[selectedDay];
+    const itemIndex = daySchedule.findIndex(i => i.id === item.id);
+    const newId = generateId();
+    
+    const duplicated = {
+      ...item,
+      id: newId,
+      activity: `${item.activity} (copy)`
+    };
+    
+    const newSchedule = [...daySchedule];
+    newSchedule.splice(itemIndex + 1, 0, duplicated);
+    
+    const recalculated = recalculateTimes(newSchedule);
+    setSchedule({ ...schedule, [selectedDay]: recalculated });
+    setHasChanges(true);
+    setSwipedItemId(null);
+    setRecentlyAddedId(newId);
+    setTimeout(() => setRecentlyAddedId(null), 1000);
+  };
+
+  // Copy Activity to Other Days
+  const copyToDay = (item, targetDay) => {
+    const targetSchedule = schedule[targetDay] || [];
+    const lastItem = targetSchedule[targetSchedule.length - 1];
+    const newTime = lastItem 
+      ? formatMinutesToTime(parseTimeToMinutes(lastItem.time) + lastItem.duration)
+      : '9:00 AM';
+
+    const copiedActivity = {
+      ...item,
+      id: generateId(),
+      time: newTime
+    };
+
+    const newSchedule = [...targetSchedule, copiedActivity];
+    const recalculated = recalculateTimes(newSchedule);
+    
+    setSchedule({ ...schedule, [targetDay]: recalculated });
+    setHasChanges(true);
+    setShowCopyModal(null);
+    setSwipedItemId(null);
+  };
+
+  // Quick Time Adjust
+  const quickTimeAdjust = (item, adjustment) => {
+    const newDuration = Math.max(15, Math.min(480, item.duration + adjustment));
+    const newDaySchedule = schedule[selectedDay].map(i =>
+      i.id === item.id ? { ...i, duration: newDuration } : i
+    );
+    const recalculated = recalculateTimes(newDaySchedule);
+    setSchedule({ ...schedule, [selectedDay]: recalculated });
+    setHasChanges(true);
+  };
+
+  // Swipe handlers for mobile
+  const handleTouchStart = (e, itemId) => {
+    swipeStartX.current = e.touches[0].clientX;
+  };
+
+  const handleTouchMove = (e, itemId) => {
+    if (!swipeStartX.current) return;
+    const currentX = e.touches[0].clientX;
+    const diff = swipeStartX.current - currentX;
+    
+    if (diff > swipeThreshold) {
+      setSwipedItemId(itemId);
+    } else if (diff < -swipeThreshold / 2) {
+      setSwipedItemId(null);
+    }
+  };
+
+  const handleTouchEnd = () => {
+    swipeStartX.current = null;
+  };
+
   // Day navigation
   const prevDay = () => {
     const idx = days.indexOf(selectedDay);
@@ -931,6 +1108,25 @@ export default function JustinSchedule() {
               Add
             </button>
             
+            {/* Quick Add Templates Button */}
+            <button
+              onClick={() => setShowQuickAdd(!showQuickAdd)}
+              className={`px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-2 transition-all hover:scale-[1.02] ${
+                showQuickAdd
+                  ? 'text-white shadow-lg'
+                  : darkMode 
+                    ? 'bg-white/10 hover:bg-white/20 text-white/80' 
+                    : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+              }`}
+              style={showQuickAdd ? { 
+                background: `linear-gradient(to right, ${theme.secondary}, ${theme.primary})`,
+                boxShadow: `0 4px 15px ${theme.secondary}40`
+              } : {}}
+            >
+              <Zap className="w-4 h-4" />
+              Quick
+            </button>
+            
             {hasChanges && (
               <>
                 <button
@@ -960,6 +1156,121 @@ export default function JustinSchedule() {
             )}
           </div>
         </div>
+
+        {/* ===================================== */}
+        {/* QUICK ADD TEMPLATES PANEL */}
+        {/* ===================================== */}
+        {showQuickAdd && (
+          <GlassCard darkMode={darkMode} className="mb-4 animate-scale-in" glow glowColor={theme.secondary}>
+            <div className="p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className={`font-semibold flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                  <Zap className="w-4 h-4" style={{ color: theme.primary }} />
+                  Quick Add Templates
+                </h3>
+                <button
+                  onClick={() => setShowQuickAdd(false)}
+                  className={`p-1.5 rounded-lg transition-all ${darkMode ? 'hover:bg-white/10' : 'hover:bg-gray-100'}`}
+                >
+                  <X className={`w-4 h-4 ${darkMode ? 'text-white/50' : 'text-gray-400'}`} />
+                </button>
+              </div>
+              
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                {activityTemplates.map((template, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => quickAddFromTemplate(template)}
+                    className={`flex flex-col items-center gap-1.5 p-3 rounded-xl transition-all hover:scale-[1.03] active:scale-[0.98] ${
+                      darkMode 
+                        ? 'bg-white/5 hover:bg-white/10' 
+                        : 'bg-gray-50 hover:bg-gray-100'
+                    }`}
+                    style={{ 
+                      borderLeft: `3px solid ${categories[template.category]?.accent || theme.primary}` 
+                    }}
+                  >
+                    <span className="text-2xl">{template.emoji}</span>
+                    <span className={`text-xs font-medium text-center leading-tight ${darkMode ? 'text-white/80' : 'text-gray-700'}`}>
+                      {template.name}
+                    </span>
+                    <span className={`text-[10px] ${darkMode ? 'text-white/40' : 'text-gray-400'}`}>
+                      {template.duration}m
+                    </span>
+                  </button>
+                ))}
+              </div>
+              
+              {/* Time Gap Suggestions */}
+              {findTimeGaps().length > 0 && (
+                <div className="mt-4 pt-4 border-t border-white/10">
+                  <p className={`text-xs font-medium mb-2 flex items-center gap-1.5 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                    <Timer className="w-3.5 h-3.5" />
+                    Available Time Slots
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {findTimeGaps().slice(0, 3).map((gap, idx) => (
+                      <div
+                        key={idx}
+                        className={`px-3 py-1.5 rounded-lg text-xs ${
+                          darkMode ? 'bg-white/5 text-white/60' : 'bg-gray-100 text-gray-600'
+                        }`}
+                      >
+                        <span className="font-medium">{gap.start}</span>
+                        <span className="mx-1">•</span>
+                        <span>{formatDuration(gap.duration)} free</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </GlassCard>
+        )}
+
+        {/* ===================================== */}
+        {/* COPY TO DAY MODAL */}
+        {/* ===================================== */}
+        {showCopyModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+            <GlassCard darkMode={darkMode} className="w-full max-w-sm animate-scale-in">
+              <div className="p-5">
+                <h3 className={`font-bold mb-4 flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                  <Copy className="w-5 h-5" style={{ color: theme.primary }} />
+                  Copy to Day
+                </h3>
+                <p className={`text-sm mb-4 ${darkMode ? 'text-white/60' : 'text-gray-600'}`}>
+                  Copy "{showCopyModal.activity.substring(0, 30)}..." to:
+                </p>
+                <div className="grid grid-cols-2 gap-2 mb-4">
+                  {days.filter(d => d !== selectedDay).map(day => (
+                    <button
+                      key={day}
+                      onClick={() => copyToDay(showCopyModal, day)}
+                      className={`px-4 py-3 rounded-xl text-sm font-medium transition-all hover:scale-[1.02] ${
+                        darkMode 
+                          ? 'bg-white/5 hover:bg-white/10 text-white/80' 
+                          : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                      }`}
+                    >
+                      {day}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={() => setShowCopyModal(null)}
+                  className={`w-full px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    darkMode 
+                      ? 'bg-white/10 hover:bg-white/20 text-white/70' 
+                      : 'bg-gray-200 hover:bg-gray-300 text-gray-600'
+                  }`}
+                >
+                  Cancel
+                </button>
+              </div>
+            </GlassCard>
+          </div>
+        )}
 
         {/* ===================================== */}
         {/* SETTINGS VIEW */}
@@ -1342,6 +1653,8 @@ export default function JustinSchedule() {
                   const isCurrent = isCurrentActivity(item);
                   const isDropped = droppedItemId === item.id;
                   const isBeingDraggedOver = isDraggingActive && !isDragging;
+                  const isSwiped = swipedItemId === item.id;
+                  const isRecentlyAdded = recentlyAddedId === item.id;
                   
                   // Calculate if this item should shift
                   const shouldShiftDown = isDraggingActive && draggedItem && 
@@ -1354,59 +1667,113 @@ export default function JustinSchedule() {
                   return (
                     <div
                       key={item.id}
-                      draggable={!isTransition && !isEditing}
-                      onDragStart={(e) => handleDragStart(e, index)}
-                      onDragOver={(e) => handleDragOver(e, index)}
-                      onDragEnter={(e) => handleDragEnter(e, index)}
-                      onDragLeave={handleDragLeave}
-                      onDragEnd={handleDragEnd}
-                      onDrop={(e) => handleDrop(e, index)}
-                      className={`
-                        draggable-item group relative flex items-center gap-3 p-4 rounded-xl
-                        ${isDragOver 
-                          ? 'drop-target-glow ring-2 ring-dashed scale-[1.02]'
-                          : isEditing
-                            ? 'ring-2'
-                            : isCurrent
-                              ? 'ring-2 shadow-lg'
-                              : item.special 
-                                ? darkMode 
-                                  ? 'bg-gradient-to-r from-yellow-500/10 to-amber-500/10 hover:from-yellow-500/20 hover:to-amber-500/20' 
-                                  : 'bg-gradient-to-r from-yellow-50 to-amber-50 hover:from-yellow-100 hover:to-amber-100'
-                                : darkMode 
-                                  ? 'bg-white/5 hover:bg-white/10' 
-                                  : 'bg-gray-50 hover:bg-gray-100'
-                        }
-                        ${!isTransition && !isEditing ? 'cursor-grab active:cursor-grabbing' : ''}
-                        ${isDragging ? 'opacity-40 scale-[0.98] shadow-none' : ''}
-                        ${isDropped ? 'animate-drop-bounce' : ''}
-                        ${shouldShiftDown ? 'translate-y-2' : ''}
-                        ${shouldShiftUp ? '-translate-y-2' : ''}
-                        ${isBeingDraggedOver && !isDragOver ? 'transition-transform duration-200' : ''}
-                      `}
-                      style={{
-                        ...(isDragOver ? { 
-                          borderColor: theme.primary,
-                          backgroundColor: darkMode ? 'rgba(59, 130, 246, 0.1)' : 'rgba(59, 130, 246, 0.05)',
-                          transform: 'scale(1.02)',
-                        } : {}),
-                        ...(isEditing ? { borderColor: theme.primary } : {}),
-                        ...(isCurrent ? { 
-                          borderColor: catInfo.accent,
-                          boxShadow: `0 0 20px ${catInfo.accent}30`
-                        } : {}),
-                        zIndex: isDragging ? 1000 : 'auto',
-                      }}
+                      className="relative overflow-hidden rounded-xl"
                     >
-                      {/* Drop indicator line above item */}
-                      {isDragOver && draggedItem && draggedItem.index > index && (
-                        <div 
-                          className="absolute -top-1 left-4 right-4 h-1 rounded-full"
-                          style={{ 
-                            background: `linear-gradient(90deg, transparent, ${theme.primary}, transparent)`,
-                            boxShadow: `0 0 8px ${theme.primary}80`
-                          }}
-                        />
+                      {/* Swipe Action Buttons (revealed on swipe) */}
+                      <div 
+                        className={`absolute inset-y-0 right-0 flex items-center gap-1 pr-2 transition-all duration-300 ${
+                          isSwiped ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'
+                        }`}
+                        style={{ width: '180px' }}
+                      >
+                        {/* Quick Time Adjust */}
+                        <button
+                          onClick={() => quickTimeAdjust(item, -15)}
+                          className="p-2 rounded-lg bg-orange-500/80 text-white hover:bg-orange-500 transition-all"
+                          title="Subtract 15 min"
+                        >
+                          <Minus className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => quickTimeAdjust(item, 15)}
+                          className="p-2 rounded-lg bg-green-500/80 text-white hover:bg-green-500 transition-all"
+                          title="Add 15 min"
+                        >
+                          <Plus className="w-4 h-4" />
+                        </button>
+                        
+                        {/* Duplicate */}
+                        <button
+                          onClick={() => duplicateActivity(item)}
+                          className="p-2 rounded-lg bg-blue-500/80 text-white hover:bg-blue-500 transition-all"
+                          title="Duplicate"
+                        >
+                          <Layers className="w-4 h-4" />
+                        </button>
+                        
+                        {/* Copy to Day */}
+                        <button
+                          onClick={() => setShowCopyModal(item)}
+                          className="p-2 rounded-lg bg-purple-500/80 text-white hover:bg-purple-500 transition-all"
+                          title="Copy to day"
+                        >
+                          <Copy className="w-4 h-4" />
+                        </button>
+                      </div>
+                      
+                      {/* Main Item Content */}
+                      <div
+                        draggable={!isTransition && !isEditing && !isSwiped}
+                        onDragStart={(e) => handleDragStart(e, index)}
+                        onDragOver={(e) => handleDragOver(e, index)}
+                        onDragEnter={(e) => handleDragEnter(e, index)}
+                        onDragLeave={handleDragLeave}
+                        onDragEnd={handleDragEnd}
+                        onDrop={(e) => handleDrop(e, index)}
+                        onTouchStart={(e) => !isTransition && handleTouchStart(e, item.id)}
+                        onTouchMove={(e) => !isTransition && handleTouchMove(e, item.id)}
+                        onTouchEnd={handleTouchEnd}
+                        onClick={() => isSwiped && setSwipedItemId(null)}
+                        className={`
+                          draggable-item group relative flex items-center gap-3 p-4 rounded-xl
+                          transition-all duration-300
+                          ${isDragOver 
+                            ? 'drop-target-glow ring-2 ring-dashed scale-[1.02]'
+                            : isEditing
+                              ? 'ring-2'
+                              : isCurrent
+                                ? 'ring-2 shadow-lg'
+                                : item.special 
+                                  ? darkMode 
+                                    ? 'bg-gradient-to-r from-yellow-500/10 to-amber-500/10 hover:from-yellow-500/20 hover:to-amber-500/20' 
+                                    : 'bg-gradient-to-r from-yellow-50 to-amber-50 hover:from-yellow-100 hover:to-amber-100'
+                                  : darkMode 
+                                    ? 'bg-white/5 hover:bg-white/10' 
+                                    : 'bg-gray-50 hover:bg-gray-100'
+                          }
+                          ${!isTransition && !isEditing ? 'cursor-grab active:cursor-grabbing' : ''}
+                          ${isDragging ? 'opacity-40 scale-[0.98] shadow-none' : ''}
+                          ${isDropped ? 'animate-drop-bounce' : ''}
+                          ${isRecentlyAdded ? 'animate-scale-in ring-2' : ''}
+                          ${shouldShiftDown ? 'translate-y-2' : ''}
+                          ${shouldShiftUp ? '-translate-y-2' : ''}
+                          ${isBeingDraggedOver && !isDragOver ? 'transition-transform duration-200' : ''}
+                          ${isSwiped ? '-translate-x-[180px]' : 'translate-x-0'}
+                        `}
+                        style={{
+                          ...(isDragOver ? { 
+                            borderColor: theme.primary,
+                            backgroundColor: darkMode ? 'rgba(59, 130, 246, 0.1)' : 'rgba(59, 130, 246, 0.05)',
+                            transform: 'scale(1.02)',
+                          } : {}),
+                          ...(isEditing ? { borderColor: theme.primary } : {}),
+                          ...(isCurrent ? { 
+                            borderColor: catInfo.accent,
+                            boxShadow: `0 0 20px ${catInfo.accent}30`
+                          } : {}),
+                          ...(isRecentlyAdded ? { borderColor: theme.primary } : {}),
+                          zIndex: isDragging ? 1000 : 'auto',
+                        }}
+                      >
+                        {/* Drop indicator line above item */}
+                        {isDragOver && draggedItem && draggedItem.index > index && (
+                          <div 
+                            className="absolute -top-1 left-4 right-4 h-1 rounded-full"
+                            style={{ 
+                              background: `linear-gradient(90deg, transparent, ${theme.primary}, transparent)`,
+                              boxShadow: `0 0 8px ${theme.primary}80`
+                            }}
+                          />
                       )}
                       
                       {/* Drop indicator line below item */}
@@ -1593,6 +1960,7 @@ export default function JustinSchedule() {
                           />
                         </div>
                       )}
+                      </div>
                     </div>
                   );
                 })}
