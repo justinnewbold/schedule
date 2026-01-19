@@ -573,23 +573,86 @@ export default function JustinSchedule() {
     }
   };
 
-  // Drag and drop handlers
+  // Enhanced Drag and drop state
+  const [droppedItemId, setDroppedItemId] = useState(null);
+  const [isDraggingActive, setIsDraggingActive] = useState(false);
+  const dragTimeout = useRef(null);
+
+  // Drag and drop handlers with enhanced animations
   const handleDragStart = (e, index) => {
     dragNode.current = e.target;
     setDraggedItem({ index, item: filteredSchedule[index] });
-    setTimeout(() => e.target.style.opacity = '0.5', 0);
+    setIsDraggingActive(true);
+    
+    // Add dragging class for CSS animations
+    e.target.classList.add('dragging');
+    
+    // Set drag image with offset for better visual feedback
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      // Create ghost image offset
+      const rect = e.target.getBoundingClientRect();
+      e.dataTransfer.setDragImage(e.target, rect.width / 2, rect.height / 2);
+    }
+    
+    // Add floating animation after initial lift
+    dragTimeout.current = setTimeout(() => {
+      if (dragNode.current) {
+        dragNode.current.classList.add('floating');
+      }
+    }, 200);
   };
 
   const handleDragOver = (e, index) => {
     e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    
     if (draggedItem?.index !== index) {
       setDragOverIndex(index);
     }
   };
 
+  const handleDragEnter = (e, index) => {
+    e.preventDefault();
+    if (draggedItem?.index !== index) {
+      setDragOverIndex(index);
+      // Add wiggle animation to drop target
+      e.currentTarget.classList.add('drag-hover');
+    }
+  };
+
+  const handleDragLeave = (e) => {
+    e.currentTarget.classList.remove('drag-hover');
+  };
+
+  const handleDragEnd = (e) => {
+    // Clear timeout
+    if (dragTimeout.current) {
+      clearTimeout(dragTimeout.current);
+    }
+    
+    // Remove all drag classes
+    if (dragNode.current) {
+      dragNode.current.classList.remove('dragging', 'floating');
+    }
+    
+    setIsDraggingActive(false);
+    setDraggedItem(null);
+    setDragOverIndex(null);
+  };
+
   const handleDrop = (e, dropIndex) => {
     e.preventDefault();
-    if (!draggedItem || draggedItem.index === dropIndex) return;
+    
+    // Clear timeout
+    if (dragTimeout.current) {
+      clearTimeout(dragTimeout.current);
+    }
+    
+    if (!draggedItem || draggedItem.index === dropIndex) {
+      handleDragEnd(e);
+      return;
+    }
 
     const newDaySchedule = [...schedule[selectedDay]];
     const [removed] = newDaySchedule.splice(draggedItem.index, 1);
@@ -598,9 +661,19 @@ export default function JustinSchedule() {
     const recalculated = recalculateTimes(newDaySchedule);
     setSchedule({ ...schedule, [selectedDay]: recalculated });
     setHasChanges(true);
+    
+    // Set dropped item for bounce animation
+    setDroppedItemId(removed.id);
+    setTimeout(() => setDroppedItemId(null), 400);
+    
+    // Clean up
+    if (dragNode.current) {
+      dragNode.current.classList.remove('dragging', 'floating');
+    }
+    
     setDraggedItem(null);
     setDragOverIndex(null);
-    if (dragNode.current) dragNode.current.style.opacity = '1';
+    setIsDraggingActive(false);
   };
 
   // Edit handlers
@@ -1264,9 +1337,19 @@ export default function JustinSchedule() {
                   const Icon = catInfo.icon;
                   const isTransition = item.category === 'Transition';
                   const isDragging = draggedItem?.index === index;
-                  const isDragOver = dragOverIndex === index;
+                  const isDragOver = dragOverIndex === index && !isDragging;
                   const isEditing = editingItem === item.id;
                   const isCurrent = isCurrentActivity(item);
+                  const isDropped = droppedItemId === item.id;
+                  const isBeingDraggedOver = isDraggingActive && !isDragging;
+                  
+                  // Calculate if this item should shift
+                  const shouldShiftDown = isDraggingActive && draggedItem && 
+                    index > draggedItem.index && dragOverIndex !== null && 
+                    index <= dragOverIndex && !isDragging;
+                  const shouldShiftUp = isDraggingActive && draggedItem && 
+                    index < draggedItem.index && dragOverIndex !== null && 
+                    index >= dragOverIndex && !isDragging;
                   
                   return (
                     <div
@@ -1274,10 +1357,14 @@ export default function JustinSchedule() {
                       draggable={!isTransition && !isEditing}
                       onDragStart={(e) => handleDragStart(e, index)}
                       onDragOver={(e) => handleDragOver(e, index)}
+                      onDragEnter={(e) => handleDragEnter(e, index)}
+                      onDragLeave={handleDragLeave}
+                      onDragEnd={handleDragEnd}
                       onDrop={(e) => handleDrop(e, index)}
-                      className={`group relative flex items-center gap-3 p-4 rounded-xl transition-all duration-300 ${
-                        isDragOver 
-                          ? 'ring-2 ring-dashed'
+                      className={`
+                        draggable-item group relative flex items-center gap-3 p-4 rounded-xl
+                        ${isDragOver 
+                          ? 'drop-target-glow ring-2 ring-dashed scale-[1.02]'
                           : isEditing
                             ? 'ring-2'
                             : isCurrent
@@ -1289,19 +1376,57 @@ export default function JustinSchedule() {
                                 : darkMode 
                                   ? 'bg-white/5 hover:bg-white/10' 
                                   : 'bg-gray-50 hover:bg-gray-100'
-                      } ${!isTransition && !isEditing ? 'cursor-grab active:cursor-grabbing' : ''} ${isDragging ? 'opacity-50 scale-95' : ''}`}
+                        }
+                        ${!isTransition && !isEditing ? 'cursor-grab active:cursor-grabbing' : ''}
+                        ${isDragging ? 'opacity-40 scale-[0.98] shadow-none' : ''}
+                        ${isDropped ? 'animate-drop-bounce' : ''}
+                        ${shouldShiftDown ? 'translate-y-2' : ''}
+                        ${shouldShiftUp ? '-translate-y-2' : ''}
+                        ${isBeingDraggedOver && !isDragOver ? 'transition-transform duration-200' : ''}
+                      `}
                       style={{
-                        ...(isDragOver ? { borderColor: theme.primary } : {}),
+                        ...(isDragOver ? { 
+                          borderColor: theme.primary,
+                          backgroundColor: darkMode ? 'rgba(59, 130, 246, 0.1)' : 'rgba(59, 130, 246, 0.05)',
+                          transform: 'scale(1.02)',
+                        } : {}),
                         ...(isEditing ? { borderColor: theme.primary } : {}),
                         ...(isCurrent ? { 
                           borderColor: catInfo.accent,
                           boxShadow: `0 0 20px ${catInfo.accent}30`
                         } : {}),
+                        zIndex: isDragging ? 1000 : 'auto',
                       }}
                     >
+                      {/* Drop indicator line above item */}
+                      {isDragOver && draggedItem && draggedItem.index > index && (
+                        <div 
+                          className="absolute -top-1 left-4 right-4 h-1 rounded-full"
+                          style={{ 
+                            background: `linear-gradient(90deg, transparent, ${theme.primary}, transparent)`,
+                            boxShadow: `0 0 8px ${theme.primary}80`
+                          }}
+                        />
+                      )}
+                      
+                      {/* Drop indicator line below item */}
+                      {isDragOver && draggedItem && draggedItem.index < index && (
+                        <div 
+                          className="absolute -bottom-1 left-4 right-4 h-1 rounded-full"
+                          style={{ 
+                            background: `linear-gradient(90deg, transparent, ${theme.primary}, transparent)`,
+                            boxShadow: `0 0 8px ${theme.primary}80`
+                          }}
+                        />
+                      )}
+                      
                       {/* Drag Handle */}
                       {!isTransition && !isEditing && (
-                        <div className={`opacity-0 group-hover:opacity-100 transition-opacity ${darkMode ? 'text-white/30' : 'text-gray-400'}`}>
+                        <div className={`
+                          opacity-0 group-hover:opacity-100 transition-all duration-200
+                          ${isDraggingActive ? 'opacity-100' : ''}
+                          ${darkMode ? 'text-white/30 group-hover:text-white/60' : 'text-gray-400 group-hover:text-gray-600'}
+                        `}>
                           <GripVertical className="w-5 h-5" />
                         </div>
                       )}
@@ -1309,9 +1434,9 @@ export default function JustinSchedule() {
                       
                       {/* Category Icon */}
                       <div 
-                        className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 transition-all ${
+                        className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 transition-all duration-300 ${
                           isCurrent ? 'animate-pulse' : ''
-                        }`}
+                        } ${isDragOver ? 'scale-110' : ''}`}
                         style={{ 
                           background: `linear-gradient(135deg, ${catInfo.accent}40, ${catInfo.accent}20)`,
                         }}
