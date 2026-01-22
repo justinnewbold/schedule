@@ -7,7 +7,8 @@ import {
   Award, Zap, Cloud, CloudOff, Loader2, Palette, CalendarCheck,
   Download, ExternalLink, RefreshCw, Copy, Timer, Layers,
   ChevronUp, ChevronDown, Minus, Bell, BellOff, Target, Search,
-  Filter, AlertCircle
+  Filter, AlertCircle, Undo2, Redo2, CopyPlus, Upload, FileJson,
+  History, Archive
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
@@ -475,6 +476,18 @@ export default function JustinSchedule() {
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [showFilters, setShowFilters] = useState(false);
 
+  // Undo/Redo state
+  const [undoStack, setUndoStack] = useState([]);
+  const [redoStack, setRedoStack] = useState([]);
+  const maxUndoSteps = 20;
+
+  // Clone Week state
+  const [showCloneWeekModal, setShowCloneWeekModal] = useState(false);
+
+  // Backup/Restore state
+  const [showBackupModal, setShowBackupModal] = useState(false);
+  const fileInputRef = useRef(null);
+
   // Activity Templates for Quick Add
   const activityTemplates = [
     { emoji: '☕', name: 'Coffee Break', duration: 15, category: 'Personal' },
@@ -509,6 +522,181 @@ export default function JustinSchedule() {
   useEffect(() => {
     localStorage.setItem('weeklyGoals', JSON.stringify(weeklyGoals));
   }, [weeklyGoals]);
+
+  // Undo/Redo functions
+  const pushToUndoStack = useCallback((previousSchedule) => {
+    setUndoStack(prev => {
+      const newStack = [...prev, JSON.stringify(previousSchedule)];
+      // Keep only the last maxUndoSteps
+      if (newStack.length > maxUndoSteps) {
+        return newStack.slice(-maxUndoSteps);
+      }
+      return newStack;
+    });
+    // Clear redo stack when a new action is performed
+    setRedoStack([]);
+  }, [maxUndoSteps]);
+
+  const undo = useCallback(() => {
+    if (undoStack.length === 0) return;
+
+    const newUndoStack = [...undoStack];
+    const previousState = newUndoStack.pop();
+
+    // Push current state to redo stack
+    setRedoStack(prev => [...prev, JSON.stringify(schedule)]);
+
+    // Restore previous state
+    setSchedule(JSON.parse(previousState));
+    setUndoStack(newUndoStack);
+    setHasChanges(true);
+  }, [undoStack, schedule]);
+
+  const redo = useCallback(() => {
+    if (redoStack.length === 0) return;
+
+    const newRedoStack = [...redoStack];
+    const nextState = newRedoStack.pop();
+
+    // Push current state to undo stack
+    setUndoStack(prev => [...prev, JSON.stringify(schedule)]);
+
+    // Restore next state
+    setSchedule(JSON.parse(nextState));
+    setRedoStack(newRedoStack);
+    setHasChanges(true);
+  }, [redoStack, schedule]);
+
+  // Helper to update schedule with undo support
+  const updateScheduleWithUndo = useCallback((newSchedule) => {
+    pushToUndoStack(schedule);
+    setSchedule(newSchedule);
+    setHasChanges(true);
+  }, [schedule, pushToUndoStack]);
+
+  // Clone Week functions
+  const cloneCurrentWeek = useCallback(() => {
+    // This creates a deep copy with new IDs
+    const clonedSchedule = {};
+    Object.entries(schedule).forEach(([day, activities]) => {
+      clonedSchedule[day] = activities.map(activity => ({
+        ...activity,
+        id: generateId()
+      }));
+    });
+    return clonedSchedule;
+  }, [schedule]);
+
+  const cloneDayToAll = useCallback((sourceDay) => {
+    pushToUndoStack(schedule);
+    const sourceActivities = schedule[sourceDay] || [];
+    const newSchedule = { ...schedule };
+
+    days.forEach(day => {
+      if (day !== sourceDay) {
+        newSchedule[day] = sourceActivities.map(activity => ({
+          ...activity,
+          id: generateId()
+        }));
+      }
+    });
+
+    setSchedule(newSchedule);
+    setHasChanges(true);
+    setShowCloneWeekModal(false);
+  }, [schedule, pushToUndoStack]);
+
+  const clearAllDays = useCallback(() => {
+    if (!confirm('Are you sure you want to clear ALL activities from ALL days? This can be undone.')) return;
+    pushToUndoStack(schedule);
+    const emptySchedule = {};
+    days.forEach(day => {
+      emptySchedule[day] = [];
+    });
+    setSchedule(emptySchedule);
+    setHasChanges(true);
+    setShowCloneWeekModal(false);
+  }, [schedule, pushToUndoStack]);
+
+  // Backup/Restore functions
+  const exportBackup = useCallback(() => {
+    const backup = {
+      version: '1.0',
+      exportedAt: new Date().toISOString(),
+      schedule: schedule,
+      weeklyGoals: weeklyGoals,
+      settings: {
+        theme: selectedTheme,
+        darkMode: darkMode,
+        notificationsEnabled: notificationsEnabled,
+        notificationTiming: notificationTiming
+      }
+    };
+
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `schedule-backup-${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, [schedule, weeklyGoals, selectedTheme, darkMode, notificationsEnabled, notificationTiming]);
+
+  const importBackup = useCallback((event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const backup = JSON.parse(e.target.result);
+
+        if (!backup.schedule) {
+          alert('Invalid backup file: missing schedule data');
+          return;
+        }
+
+        if (!confirm('This will replace your current schedule. Continue?')) return;
+
+        pushToUndoStack(schedule);
+
+        // Restore schedule
+        setSchedule(backup.schedule);
+
+        // Restore goals if present
+        if (backup.weeklyGoals) {
+          setWeeklyGoals(backup.weeklyGoals);
+        }
+
+        // Restore settings if present
+        if (backup.settings) {
+          if (backup.settings.theme) setSelectedTheme(backup.settings.theme);
+          if (typeof backup.settings.darkMode === 'boolean') setDarkMode(backup.settings.darkMode);
+          if (typeof backup.settings.notificationsEnabled === 'boolean') {
+            setNotificationsEnabled(backup.settings.notificationsEnabled);
+          }
+          if (backup.settings.notificationTiming) {
+            setNotificationTiming(backup.settings.notificationTiming);
+          }
+        }
+
+        setHasChanges(true);
+        setShowBackupModal(false);
+        alert('Backup restored successfully!');
+      } catch (err) {
+        alert('Failed to parse backup file. Please check the file format.');
+        console.error('Import error:', err);
+      }
+    };
+    reader.readAsText(file);
+
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  }, [schedule, pushToUndoStack]);
 
   // Request notification permission
   const requestNotificationPermission = async () => {
@@ -869,17 +1057,18 @@ export default function JustinSchedule() {
 
   const handleDrop = (e, dropIndex) => {
     e.preventDefault();
-    
+
     // Clear timeout
     if (dragTimeout.current) {
       clearTimeout(dragTimeout.current);
     }
-    
+
     if (!draggedItem || draggedItem.index === dropIndex) {
       handleDragEnd(e);
       return;
     }
 
+    pushToUndoStack(schedule);
     const newDaySchedule = [...schedule[selectedDay]];
     const [removed] = newDaySchedule.splice(draggedItem.index, 1);
     newDaySchedule.splice(dropIndex, 0, removed);
@@ -887,11 +1076,11 @@ export default function JustinSchedule() {
     const recalculated = recalculateTimes(newDaySchedule);
     setSchedule({ ...schedule, [selectedDay]: recalculated });
     setHasChanges(true);
-    
+
     // Set dropped item for bounce animation
     setDroppedItemId(removed.id);
     setTimeout(() => setDroppedItemId(null), 400);
-    
+
     // Clean up
     if (dragNode.current) {
       dragNode.current.classList.remove('dragging', 'floating');
@@ -913,6 +1102,7 @@ export default function JustinSchedule() {
   };
 
   const saveEdit = (itemId) => {
+    pushToUndoStack(schedule);
     const newDaySchedule = schedule[selectedDay].map(item =>
       item.id === itemId ? { ...item, ...editValues } : item
     );
@@ -929,6 +1119,7 @@ export default function JustinSchedule() {
 
   const deleteItem = (itemId) => {
     if (confirm('Delete this activity?')) {
+      pushToUndoStack(schedule);
       const newDaySchedule = schedule[selectedDay].filter(item => item.id !== itemId);
       const recalculated = recalculateTimes(newDaySchedule);
       setSchedule({ ...schedule, [selectedDay]: recalculated });
@@ -939,10 +1130,11 @@ export default function JustinSchedule() {
 
   const addNewItem = () => {
     if (!newItem.activity.trim()) return;
-    
+
+    pushToUndoStack(schedule);
     const daySchedule = schedule[selectedDay];
     const lastItem = daySchedule[daySchedule.length - 1];
-    const newTime = lastItem 
+    const newTime = lastItem
       ? formatMinutesToTime(parseTimeToMinutes(lastItem.time) + lastItem.duration)
       : '9:00 AM';
 
@@ -965,9 +1157,10 @@ export default function JustinSchedule() {
 
   // Quick Add from Template
   const quickAddFromTemplate = (template) => {
+    pushToUndoStack(schedule);
     const daySchedule = schedule[selectedDay];
     const lastItem = daySchedule[daySchedule.length - 1];
-    const newTime = lastItem 
+    const newTime = lastItem
       ? formatMinutesToTime(parseTimeToMinutes(lastItem.time) + lastItem.duration)
       : '9:00 AM';
 
@@ -1039,19 +1232,20 @@ export default function JustinSchedule() {
 
   // Duplicate Activity
   const duplicateActivity = (item) => {
+    pushToUndoStack(schedule);
     const daySchedule = schedule[selectedDay];
     const itemIndex = daySchedule.findIndex(i => i.id === item.id);
     const newId = generateId();
-    
+
     const duplicated = {
       ...item,
       id: newId,
       activity: `${item.activity} (copy)`
     };
-    
+
     const newSchedule = [...daySchedule];
     newSchedule.splice(itemIndex + 1, 0, duplicated);
-    
+
     const recalculated = recalculateTimes(newSchedule);
     setSchedule({ ...schedule, [selectedDay]: recalculated });
     setHasChanges(true);
@@ -1062,9 +1256,10 @@ export default function JustinSchedule() {
 
   // Copy Activity to Other Days
   const copyToDay = (item, targetDay) => {
+    pushToUndoStack(schedule);
     const targetSchedule = schedule[targetDay] || [];
     const lastItem = targetSchedule[targetSchedule.length - 1];
-    const newTime = lastItem 
+    const newTime = lastItem
       ? formatMinutesToTime(parseTimeToMinutes(lastItem.time) + lastItem.duration)
       : '9:00 AM';
 
@@ -1076,7 +1271,7 @@ export default function JustinSchedule() {
 
     const newSchedule = [...targetSchedule, copiedActivity];
     const recalculated = recalculateTimes(newSchedule);
-    
+
     setSchedule({ ...schedule, [targetDay]: recalculated });
     setHasChanges(true);
     setShowCopyModal(null);
@@ -1085,6 +1280,7 @@ export default function JustinSchedule() {
 
   // Quick Time Adjust
   const quickTimeAdjust = (item, adjustment) => {
+    pushToUndoStack(schedule);
     const newDuration = Math.max(15, Math.min(480, item.duration + adjustment));
     const newDaySchedule = schedule[selectedDay].map(i =>
       i.id === item.id ? { ...i, duration: newDuration } : i
@@ -1296,11 +1492,11 @@ export default function JustinSchedule() {
         {/* ACTION BAR */}
         {/* ===================================== */}
         <div className="flex items-center justify-between mb-4 px-1">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={() => setShowAddForm(true)}
               className="px-4 py-2 rounded-xl text-sm font-medium text-white flex items-center gap-2 transition-all hover:scale-[1.02] shadow-lg"
-              style={{ 
+              style={{
                 background: `linear-gradient(to right, ${theme.primary}, ${theme.accent})`,
                 boxShadow: `0 4px 15px ${theme.primary}40`
               }}
@@ -1308,18 +1504,18 @@ export default function JustinSchedule() {
               <Plus className="w-4 h-4" />
               Add
             </button>
-            
+
             {/* Quick Add Templates Button */}
             <button
               onClick={() => setShowQuickAdd(!showQuickAdd)}
               className={`px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-2 transition-all hover:scale-[1.02] ${
                 showQuickAdd
                   ? 'text-white shadow-lg'
-                  : darkMode 
-                    ? 'bg-white/10 hover:bg-white/20 text-white/80' 
+                  : darkMode
+                    ? 'bg-white/10 hover:bg-white/20 text-white/80'
                     : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
               }`}
-              style={showQuickAdd ? { 
+              style={showQuickAdd ? {
                 background: `linear-gradient(to right, ${theme.secondary}, ${theme.primary})`,
                 boxShadow: `0 4px 15px ${theme.secondary}40`
               } : {}}
@@ -1327,15 +1523,51 @@ export default function JustinSchedule() {
               <Zap className="w-4 h-4" />
               Quick
             </button>
-            
+
+            {/* Undo/Redo Buttons */}
+            <div className="flex items-center gap-1">
+              <button
+                onClick={undo}
+                disabled={undoStack.length === 0}
+                className={`p-2 rounded-lg text-sm font-medium transition-all ${
+                  undoStack.length === 0
+                    ? darkMode
+                      ? 'bg-white/5 text-white/20 cursor-not-allowed'
+                      : 'bg-gray-50 text-gray-300 cursor-not-allowed'
+                    : darkMode
+                      ? 'bg-white/10 hover:bg-white/20 text-white/70 hover:text-white'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-gray-800'
+                }`}
+                title={`Undo (${undoStack.length} steps)`}
+              >
+                <Undo2 className="w-4 h-4" />
+              </button>
+              <button
+                onClick={redo}
+                disabled={redoStack.length === 0}
+                className={`p-2 rounded-lg text-sm font-medium transition-all ${
+                  redoStack.length === 0
+                    ? darkMode
+                      ? 'bg-white/5 text-white/20 cursor-not-allowed'
+                      : 'bg-gray-50 text-gray-300 cursor-not-allowed'
+                    : darkMode
+                      ? 'bg-white/10 hover:bg-white/20 text-white/70 hover:text-white'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-gray-800'
+                }`}
+                title={`Redo (${redoStack.length} steps)`}
+              >
+                <Redo2 className="w-4 h-4" />
+              </button>
+            </div>
+
             {hasChanges && (
               <>
                 <button
                   onClick={saveSchedule}
                   disabled={isSyncing}
                   className={`px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-2 transition-all ${
-                    darkMode 
-                      ? 'bg-green-500/20 hover:bg-green-500/30 text-green-400' 
+                    darkMode
+                      ? 'bg-green-500/20 hover:bg-green-500/30 text-green-400'
                       : 'bg-green-100 hover:bg-green-200 text-green-700'
                   }`}
                 >
@@ -1345,8 +1577,8 @@ export default function JustinSchedule() {
                 <button
                   onClick={resetSchedule}
                   className={`px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-2 transition-all ${
-                    darkMode 
-                      ? 'bg-white/5 hover:bg-white/10 text-white/70' 
+                    darkMode
+                      ? 'bg-white/5 hover:bg-white/10 text-white/70'
                       : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
                   }`}
                 >
@@ -1467,6 +1699,184 @@ export default function JustinSchedule() {
                   }`}
                 >
                   Cancel
+                </button>
+              </div>
+            </GlassCard>
+          </div>
+        )}
+
+        {/* ===================================== */}
+        {/* CLONE WEEK MODAL */}
+        {/* ===================================== */}
+        {showCloneWeekModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+            <GlassCard darkMode={darkMode} className="w-full max-w-md animate-scale-in">
+              <div className="p-5">
+                <h3 className={`font-bold mb-4 flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                  <CopyPlus className="w-5 h-5" style={{ color: theme.primary }} />
+                  Clone Schedule
+                </h3>
+
+                <p className={`text-sm mb-4 ${darkMode ? 'text-white/60' : 'text-gray-600'}`}>
+                  Copy a day's schedule to all other days, or clear everything.
+                </p>
+
+                {/* Clone Source Day to All */}
+                <div className="mb-4">
+                  <p className={`text-xs font-medium mb-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                    COPY DAY TO ALL OTHERS
+                  </p>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {days.map(day => (
+                      <button
+                        key={day}
+                        onClick={() => cloneDayToAll(day)}
+                        className={`px-3 py-2.5 rounded-xl text-sm font-medium transition-all hover:scale-[1.02] ${
+                          darkMode
+                            ? 'bg-white/5 hover:bg-white/10 text-white/80'
+                            : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                        }`}
+                      >
+                        {day.slice(0, 3)}
+                      </button>
+                    ))}
+                  </div>
+                  <p className={`text-xs mt-2 ${darkMode ? 'text-white/40' : 'text-gray-400'}`}>
+                    This will copy the selected day's schedule to all other days.
+                  </p>
+                </div>
+
+                {/* Danger Zone */}
+                <div className={`p-3 rounded-xl border-2 border-dashed ${
+                  darkMode ? 'border-red-500/30 bg-red-500/5' : 'border-red-200 bg-red-50'
+                }`}>
+                  <p className={`text-xs font-medium mb-2 ${darkMode ? 'text-red-400' : 'text-red-600'}`}>
+                    DANGER ZONE
+                  </p>
+                  <button
+                    onClick={clearAllDays}
+                    className={`w-full px-4 py-2.5 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 ${
+                      darkMode
+                        ? 'bg-red-500/20 hover:bg-red-500/30 text-red-400'
+                        : 'bg-red-100 hover:bg-red-200 text-red-700'
+                    }`}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Clear All Days
+                  </button>
+                </div>
+
+                <button
+                  onClick={() => setShowCloneWeekModal(false)}
+                  className={`w-full mt-4 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    darkMode
+                      ? 'bg-white/10 hover:bg-white/20 text-white/70'
+                      : 'bg-gray-200 hover:bg-gray-300 text-gray-600'
+                  }`}
+                >
+                  Close
+                </button>
+              </div>
+            </GlassCard>
+          </div>
+        )}
+
+        {/* ===================================== */}
+        {/* BACKUP RESTORE MODAL */}
+        {/* ===================================== */}
+        {showBackupModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+            <GlassCard darkMode={darkMode} className="w-full max-w-md animate-scale-in">
+              <div className="p-5">
+                <h3 className={`font-bold mb-4 flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                  <Archive className="w-5 h-5" style={{ color: theme.primary }} />
+                  Backup & Restore
+                </h3>
+
+                <p className={`text-sm mb-4 ${darkMode ? 'text-white/60' : 'text-gray-600'}`}>
+                  Export your schedule as a backup file or restore from a previous backup.
+                </p>
+
+                {/* Export Backup */}
+                <button
+                  onClick={() => { exportBackup(); setShowBackupModal(false); }}
+                  className={`w-full mb-3 flex items-center justify-between px-4 py-4 rounded-xl transition-all hover:scale-[1.01] ${
+                    darkMode
+                      ? 'bg-white/5 hover:bg-white/10'
+                      : 'bg-gray-100 hover:bg-gray-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                      darkMode ? 'bg-green-500/20' : 'bg-green-100'
+                    }`}>
+                      <Download className="w-5 h-5 text-green-500" />
+                    </div>
+                    <div className="text-left">
+                      <p className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                        Export Backup
+                      </p>
+                      <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                        Download schedule, goals & settings
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight className={`w-4 h-4 ${darkMode ? 'text-white/40' : 'text-gray-400'}`} />
+                </button>
+
+                {/* Import Backup */}
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className={`w-full mb-4 flex items-center justify-between px-4 py-4 rounded-xl transition-all hover:scale-[1.01] ${
+                    darkMode
+                      ? 'bg-white/5 hover:bg-white/10'
+                      : 'bg-gray-100 hover:bg-gray-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                      darkMode ? 'bg-blue-500/20' : 'bg-blue-100'
+                    }`}>
+                      <Upload className="w-5 h-5 text-blue-500" />
+                    </div>
+                    <div className="text-left">
+                      <p className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                        Restore from Backup
+                      </p>
+                      <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                        Import a previously exported file
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight className={`w-4 h-4 ${darkMode ? 'text-white/40' : 'text-gray-400'}`} />
+                </button>
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  accept=".json"
+                  onChange={importBackup}
+                  className="hidden"
+                />
+
+                {/* Info */}
+                <div className={`p-3 rounded-xl ${darkMode ? 'bg-white/5' : 'bg-gray-50'}`}>
+                  <div className="flex items-start gap-2">
+                    <FileJson className={`w-4 h-4 mt-0.5 ${darkMode ? 'text-white/40' : 'text-gray-400'}`} />
+                    <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      Backups include your complete schedule, weekly goals, theme preferences, and notification settings.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setShowBackupModal(false)}
+                  className={`w-full mt-4 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    darkMode
+                      ? 'bg-white/10 hover:bg-white/20 text-white/70'
+                      : 'bg-gray-200 hover:bg-gray-300 text-gray-600'
+                  }`}
+                >
+                  Close
                 </button>
               </div>
             </GlassCard>
@@ -1704,6 +2114,106 @@ export default function JustinSchedule() {
                   )}
                 </div>
               </div>
+            </div>
+          </GlassCard>
+
+          {/* Data Management Section */}
+          <GlassCard darkMode={darkMode} className="mb-4">
+            <div className="p-5">
+              <h3 className={`text-lg font-bold mb-4 flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                <History className="w-5 h-5" style={{ color: theme.primary }} />
+                Data Management
+              </h3>
+
+              <div className="space-y-3">
+                {/* Clone Week */}
+                <button
+                  onClick={() => setShowCloneWeekModal(true)}
+                  className={`w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all ${
+                    darkMode
+                      ? 'bg-white/5 hover:bg-white/10'
+                      : 'bg-gray-100 hover:bg-gray-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <CopyPlus className={`w-5 h-5 ${darkMode ? 'text-white/70' : 'text-gray-600'}`} />
+                    <div className="text-left">
+                      <p className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                        Clone Schedule
+                      </p>
+                      <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                        Copy a day to all others or clear all
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight className={`w-4 h-4 ${darkMode ? 'text-white/40' : 'text-gray-400'}`} />
+                </button>
+
+                {/* Backup & Restore */}
+                <button
+                  onClick={() => setShowBackupModal(true)}
+                  className={`w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all ${
+                    darkMode
+                      ? 'bg-white/5 hover:bg-white/10'
+                      : 'bg-gray-100 hover:bg-gray-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <Archive className={`w-5 h-5 ${darkMode ? 'text-white/70' : 'text-gray-600'}`} />
+                    <div className="text-left">
+                      <p className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                        Backup & Restore
+                      </p>
+                      <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                        Export or import your schedule data
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight className={`w-4 h-4 ${darkMode ? 'text-white/40' : 'text-gray-400'}`} />
+                </button>
+              </div>
+
+              {/* Undo/Redo Info */}
+              {(undoStack.length > 0 || redoStack.length > 0) && (
+                <div className={`mt-4 p-3 rounded-xl ${darkMode ? 'bg-white/5' : 'bg-gray-50'}`}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <History className={`w-4 h-4 ${darkMode ? 'text-white/40' : 'text-gray-400'}`} />
+                      <span className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                        History: {undoStack.length} undo, {redoStack.length} redo steps
+                      </span>
+                    </div>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={undo}
+                        disabled={undoStack.length === 0}
+                        className={`p-1.5 rounded-lg transition-all ${
+                          undoStack.length === 0
+                            ? 'opacity-30 cursor-not-allowed'
+                            : darkMode
+                              ? 'hover:bg-white/10'
+                              : 'hover:bg-gray-200'
+                        }`}
+                      >
+                        <Undo2 className={`w-3.5 h-3.5 ${darkMode ? 'text-white/60' : 'text-gray-500'}`} />
+                      </button>
+                      <button
+                        onClick={redo}
+                        disabled={redoStack.length === 0}
+                        className={`p-1.5 rounded-lg transition-all ${
+                          redoStack.length === 0
+                            ? 'opacity-30 cursor-not-allowed'
+                            : darkMode
+                              ? 'hover:bg-white/10'
+                              : 'hover:bg-gray-200'
+                        }`}
+                      >
+                        <Redo2 className={`w-3.5 h-3.5 ${darkMode ? 'text-white/60' : 'text-gray-500'}`} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </GlassCard>
           </>
