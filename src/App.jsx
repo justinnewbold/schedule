@@ -8,7 +8,8 @@ import {
   Download, ExternalLink, RefreshCw, Copy, Timer, Layers,
   ChevronUp, ChevronDown, Minus, Bell, BellOff, Target, Search,
   Filter, AlertCircle, Undo2, Redo2, CopyPlus, Upload, FileJson,
-  History, Archive
+  History, Archive, Play, Pause, Square, SkipForward, MessageSquare,
+  Keyboard, Volume2, VolumeX
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
@@ -436,9 +437,9 @@ export default function JustinSchedule() {
   const [syncStatus, setSyncStatus] = useState('idle');
   const [view, setView] = useState('schedule');
   const [editingItem, setEditingItem] = useState(null);
-  const [editValues, setEditValues] = useState({ activity: '', duration: 0, time: '' });
+  const [editValues, setEditValues] = useState({ activity: '', duration: 0, time: '', notes: '' });
   const [showAddForm, setShowAddForm] = useState(false);
-  const [newItem, setNewItem] = useState({ activity: '', duration: 30, category: 'Personal' });
+  const [newItem, setNewItem] = useState({ activity: '', duration: 30, category: 'Personal', notes: '' });
   const [draggedItem, setDraggedItem] = useState(null);
   const [dragOverIndex, setDragOverIndex] = useState(null);
   const dragNode = useRef(null);
@@ -487,6 +488,27 @@ export default function JustinSchedule() {
   // Backup/Restore state
   const [showBackupModal, setShowBackupModal] = useState(false);
   const fileInputRef = useRef(null);
+
+  // Focus Mode / Pomodoro state
+  const [focusMode, setFocusMode] = useState(false);
+  const [focusActivity, setFocusActivity] = useState(null);
+  const [focusTimeRemaining, setFocusTimeRemaining] = useState(0);
+  const [focusType, setFocusType] = useState('work'); // 'work' or 'break'
+  const [focusPaused, setFocusPaused] = useState(false);
+  const [pomodoroCount, setPomodoroCount] = useState(0);
+  const [focusSoundEnabled, setFocusSoundEnabled] = useState(true);
+  const focusIntervalRef = useRef(null);
+
+  // Pomodoro settings (in minutes)
+  const pomodoroSettings = {
+    workDuration: 25,
+    shortBreak: 5,
+    longBreak: 15,
+    longBreakInterval: 4
+  };
+
+  // Keyboard shortcuts enabled
+  const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
 
   // Activity Templates for Quick Add
   const activityTemplates = [
@@ -801,6 +823,231 @@ export default function JustinSchedule() {
     return () => clearInterval(interval);
   }, [notificationsEnabled, notificationTiming, schedule, notifiedActivities]);
 
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Don't trigger shortcuts when typing in inputs
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+        if (e.key === 'Escape') {
+          e.target.blur();
+          setEditingItem(null);
+          setShowAddForm(false);
+        }
+        return;
+      }
+
+      // Check for modifier keys
+      const isMod = e.metaKey || e.ctrlKey;
+
+      // Undo: Ctrl/Cmd + Z
+      if (isMod && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+        return;
+      }
+
+      // Redo: Ctrl/Cmd + Shift + Z or Ctrl/Cmd + Y
+      if ((isMod && e.key === 'z' && e.shiftKey) || (isMod && e.key === 'y')) {
+        e.preventDefault();
+        redo();
+        return;
+      }
+
+      // Save: Ctrl/Cmd + S
+      if (isMod && e.key === 's') {
+        e.preventDefault();
+        if (hasChanges) saveSchedule();
+        return;
+      }
+
+      // New activity: N
+      if (e.key === 'n' && !isMod) {
+        e.preventDefault();
+        setShowAddForm(true);
+        return;
+      }
+
+      // Quick add: Q
+      if (e.key === 'q' && !isMod) {
+        e.preventDefault();
+        setShowQuickAdd(!showQuickAdd);
+        return;
+      }
+
+      // Previous day: Left arrow or H
+      if ((e.key === 'ArrowLeft' || e.key === 'h') && !isMod) {
+        e.preventDefault();
+        prevDay();
+        return;
+      }
+
+      // Next day: Right arrow or L
+      if ((e.key === 'ArrowRight' || e.key === 'l') && !isMod) {
+        e.preventDefault();
+        nextDay();
+        return;
+      }
+
+      // Go to today: T
+      if (e.key === 't' && !isMod) {
+        e.preventDefault();
+        const today = new Date();
+        setSelectedDay(days[today.getDay() === 0 ? 6 : today.getDay() - 1]);
+        return;
+      }
+
+      // Toggle view: 1, 2, 3
+      if (e.key === '1' && !isMod) {
+        setView('schedule');
+        return;
+      }
+      if (e.key === '2' && !isMod) {
+        setView('dashboard');
+        return;
+      }
+      if (e.key === '3' && !isMod) {
+        setView('settings');
+        return;
+      }
+
+      // Escape: Close modals
+      if (e.key === 'Escape') {
+        setShowAddForm(false);
+        setShowQuickAdd(false);
+        setShowCopyModal(null);
+        setShowCloneWeekModal(false);
+        setShowBackupModal(false);
+        setShowKeyboardHelp(false);
+        setEditingItem(null);
+        setEditingGoal({ category: '', hours: 0 });
+        return;
+      }
+
+      // Show keyboard help: ?
+      if (e.key === '?' || (e.shiftKey && e.key === '/')) {
+        e.preventDefault();
+        setShowKeyboardHelp(!showKeyboardHelp);
+        return;
+      }
+
+      // Focus mode: F
+      if (e.key === 'f' && !isMod && currentActivity) {
+        e.preventDefault();
+        if (focusMode) {
+          stopFocusMode();
+        } else {
+          startFocusMode(currentActivity);
+        }
+        return;
+      }
+
+      // Pause/resume focus: Space (when in focus mode)
+      if (e.key === ' ' && focusMode) {
+        e.preventDefault();
+        setFocusPaused(!focusPaused);
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [undo, redo, hasChanges, saveSchedule, showQuickAdd, prevDay, nextDay, focusMode, focusPaused, currentActivity, showKeyboardHelp]);
+
+  // Focus Mode Timer
+  useEffect(() => {
+    if (focusMode && !focusPaused && focusTimeRemaining > 0) {
+      focusIntervalRef.current = setInterval(() => {
+        setFocusTimeRemaining(prev => {
+          if (prev <= 1) {
+            // Timer finished
+            handleFocusComplete();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+
+      return () => clearInterval(focusIntervalRef.current);
+    } else if (focusIntervalRef.current) {
+      clearInterval(focusIntervalRef.current);
+    }
+  }, [focusMode, focusPaused, focusTimeRemaining]);
+
+  // Focus mode functions
+  const startFocusMode = useCallback((activity = null) => {
+    setFocusActivity(activity);
+    setFocusType('work');
+    setFocusTimeRemaining(pomodoroSettings.workDuration * 60);
+    setFocusMode(true);
+    setFocusPaused(false);
+  }, [pomodoroSettings.workDuration]);
+
+  const stopFocusMode = useCallback(() => {
+    setFocusMode(false);
+    setFocusActivity(null);
+    setFocusTimeRemaining(0);
+    setFocusPaused(false);
+    if (focusIntervalRef.current) {
+      clearInterval(focusIntervalRef.current);
+    }
+  }, []);
+
+  const handleFocusComplete = useCallback(() => {
+    // Play sound if enabled
+    if (focusSoundEnabled) {
+      try {
+        const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdH2Onp+cnZuZl5eXmJmbnp+gnp2bmJWTkY+OjY2Ojo+RlJebnp+fnp2bmJWSkI6MioqKi42PlZmenp2bmJWSkI6MiomJiYqMj5Oam52dnJqXlJGOjIqIh4eHiImLj5OXmp2dnJuZlpOQjYuJh4aGhoaHiYuOkpaZm5ycm5mWk5CNi4mHhoWFhYWGiIqNkJSXmpubmpmXlJGOjImHhoWEhISEhYeJjI+SlZiampqZl5WSkI2LiIaFhIODg4OEhoiLjpGUl5mampqYlpOQjouIhoWEg4ODg4OFh4mMj5KVl5mampqYlpOQjouIhoWEg4KCgoKEhoiLjpGUl5mampqYlpOQjouIhoWEg4KCgoKDhYeKjI+SlZeZmpqZl5WSkI2LiIaFhIOCgoKChIaIi46RlJeZmpqZmJaUkY6MiYeGhIOCgoKCg4WGiYyPkpWYmZqamJaUkY6MiYeGhIOCgoKCg4WGiYyPkpWYmZqamJaUkY6MiYeGhIOCgoKCg4WGiYyPkpWYmZqal5WTkI2KiIWEg4KBgYGBg4WGiYyPkpWYmZqal5WTkI2KiIWEg4KBgYGBg4WGiYyPkpWYmZqal5WTkI2KiIWEg4KBgYGBg4SGiYuOkZSXmZqal5WTkI2KiIWEg4KBgYGBgoSGiIuOkZSXmZqal5WTkI2KiIWEg4KBgYGBgoSGiIuOkZSXmZqal5WTkI2KiIWEg4KBgYGBgoSGiIuOkZSXmZqal5WTkI2KiIWEg4KBgYGBgoSGiIuOkZSXmZqal5WTkI2KiIWEg4KBgYGB');
+        audio.volume = 0.5;
+        audio.play().catch(() => {});
+      } catch (e) {}
+    }
+
+    // Send notification
+    if (notificationsEnabled && Notification.permission === 'granted') {
+      const title = focusType === 'work' ? '🎉 Focus session complete!' : '⏰ Break time over!';
+      const body = focusType === 'work'
+        ? `Great job! Take a ${pomodoroCount + 1 >= pomodoroSettings.longBreakInterval ? pomodoroSettings.longBreak : pomodoroSettings.shortBreak} minute break.`
+        : 'Ready for another focus session?';
+      new Notification(title, { body });
+    }
+
+    if (focusType === 'work') {
+      // Completed a work session
+      const newCount = pomodoroCount + 1;
+      setPomodoroCount(newCount);
+
+      // Start break
+      const isLongBreak = newCount % pomodoroSettings.longBreakInterval === 0;
+      setFocusType('break');
+      setFocusTimeRemaining((isLongBreak ? pomodoroSettings.longBreak : pomodoroSettings.shortBreak) * 60);
+    } else {
+      // Completed a break, start new work session
+      setFocusType('work');
+      setFocusTimeRemaining(pomodoroSettings.workDuration * 60);
+    }
+  }, [focusType, pomodoroCount, pomodoroSettings, notificationsEnabled, focusSoundEnabled]);
+
+  const skipFocusPhase = useCallback(() => {
+    if (focusType === 'work') {
+      // Skip to break
+      const newCount = pomodoroCount + 1;
+      setPomodoroCount(newCount);
+      const isLongBreak = newCount % pomodoroSettings.longBreakInterval === 0;
+      setFocusType('break');
+      setFocusTimeRemaining((isLongBreak ? pomodoroSettings.longBreak : pomodoroSettings.shortBreak) * 60);
+    } else {
+      // Skip to work
+      setFocusType('work');
+      setFocusTimeRemaining(pomodoroSettings.workDuration * 60);
+    }
+  }, [focusType, pomodoroCount, pomodoroSettings]);
+
+  const formatFocusTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
   // Load schedule from cloud
   useEffect(() => {
     const loadSchedule = async () => {
@@ -1094,10 +1341,11 @@ export default function JustinSchedule() {
   // Edit handlers
   const startEdit = (item) => {
     setEditingItem(item.id);
-    setEditValues({ 
-      activity: item.activity, 
+    setEditValues({
+      activity: item.activity,
       duration: item.duration,
-      time: item.time 
+      time: item.time,
+      notes: item.notes || ''
     });
   };
 
@@ -1114,7 +1362,7 @@ export default function JustinSchedule() {
 
   const cancelEdit = () => {
     setEditingItem(null);
-    setEditValues({ activity: '', duration: 0, time: '' });
+    setEditValues({ activity: '', duration: 0, time: '', notes: '' });
   };
 
   const deleteItem = (itemId) => {
@@ -1143,7 +1391,8 @@ export default function JustinSchedule() {
       time: newTime,
       activity: newItem.activity,
       duration: newItem.duration,
-      category: newItem.category
+      category: newItem.category,
+      notes: newItem.notes || ''
     };
 
     setSchedule({
@@ -1152,7 +1401,7 @@ export default function JustinSchedule() {
     });
     setHasChanges(true);
     setShowAddForm(false);
-    setNewItem({ activity: '', duration: 30, category: 'Personal' });
+    setNewItem({ activity: '', duration: 30, category: 'Personal', notes: '' });
   };
 
   // Quick Add from Template
@@ -1378,12 +1627,25 @@ export default function JustinSchedule() {
                   {syncStatus === 'syncing' ? 'Syncing...' : syncStatus === 'synced' ? 'Synced' : syncStatus === 'error' ? 'Offline' : 'Local'}
                 </div>
 
+                {/* Keyboard Shortcuts Help */}
+                <button
+                  onClick={() => setShowKeyboardHelp(true)}
+                  className={`p-2.5 rounded-xl transition-all hover:scale-110 ${
+                    darkMode
+                      ? 'bg-white/10 hover:bg-white/20 text-white/60'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-500'
+                  }`}
+                  title="Keyboard shortcuts (?)"
+                >
+                  <Keyboard className="w-5 h-5" />
+                </button>
+
                 {/* Dark Mode Toggle */}
                 <button
                   onClick={() => setDarkMode(!darkMode)}
                   className={`p-2.5 rounded-xl transition-all hover:scale-110 ${
-                    darkMode 
-                      ? 'bg-white/10 hover:bg-white/20 text-yellow-400' 
+                    darkMode
+                      ? 'bg-white/10 hover:bg-white/20 text-yellow-400'
                       : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
                   }`}
                 >
@@ -1404,15 +1666,15 @@ export default function JustinSchedule() {
 
             {/* Current Activity Banner */}
             {currentActivity && (
-              <div 
+              <div
                 className={`p-4 rounded-xl border-2 ${darkMode ? 'bg-white/5 border-white/10' : 'bg-white border-gray-200'}`}
                 style={{ borderColor: categories[currentActivity.category]?.accent }}
               >
                 <div className="flex items-center gap-4">
                   <div className="flex-shrink-0">
-                    <ProgressRing 
-                      progress={currentActivity.progress} 
-                      size={60} 
+                    <ProgressRing
+                      progress={currentActivity.progress}
+                      size={60}
                       strokeWidth={5}
                       color={categories[currentActivity.category]?.accent}
                     />
@@ -1428,6 +1690,23 @@ export default function JustinSchedule() {
                       {currentActivity.remaining} min remaining
                     </p>
                   </div>
+                  {/* Focus Mode Button */}
+                  <button
+                    onClick={() => focusMode ? stopFocusMode() : startFocusMode(currentActivity)}
+                    className={`p-3 rounded-xl transition-all hover:scale-105 ${
+                      focusMode
+                        ? 'text-white shadow-lg'
+                        : darkMode
+                          ? 'bg-white/10 hover:bg-white/20 text-white/70'
+                          : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                    }`}
+                    style={focusMode ? {
+                      background: `linear-gradient(to right, ${theme.primary}, ${theme.accent})`
+                    } : {}}
+                    title={focusMode ? 'Stop focus mode (F)' : 'Start focus mode (F)'}
+                  >
+                    {focusMode ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+                  </button>
                 </div>
               </div>
             )}
@@ -1870,6 +2149,251 @@ export default function JustinSchedule() {
 
                 <button
                   onClick={() => setShowBackupModal(false)}
+                  className={`w-full mt-4 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    darkMode
+                      ? 'bg-white/10 hover:bg-white/20 text-white/70'
+                      : 'bg-gray-200 hover:bg-gray-300 text-gray-600'
+                  }`}
+                >
+                  Close
+                </button>
+              </div>
+            </GlassCard>
+          </div>
+        )}
+
+        {/* ===================================== */}
+        {/* FOCUS MODE PANEL */}
+        {/* ===================================== */}
+        {focusMode && (
+          <div className="fixed bottom-24 left-4 right-4 z-40 max-w-md mx-auto animate-slide-up">
+            <GlassCard darkMode={darkMode} glow glowColor={focusType === 'work' ? theme.primary : '#22c55e'}>
+              <div className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <div
+                      className={`w-3 h-3 rounded-full animate-pulse`}
+                      style={{ backgroundColor: focusType === 'work' ? theme.primary : '#22c55e' }}
+                    />
+                    <span className={`text-xs font-medium uppercase tracking-wide ${
+                      darkMode ? 'text-white/60' : 'text-gray-500'
+                    }`}>
+                      {focusType === 'work' ? 'Focus Time' : 'Break Time'}
+                    </span>
+                    {pomodoroCount > 0 && (
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${
+                        darkMode ? 'bg-white/10 text-white/50' : 'bg-gray-100 text-gray-500'
+                      }`}>
+                        {pomodoroCount} completed
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setFocusSoundEnabled(!focusSoundEnabled)}
+                      className={`p-1.5 rounded-lg transition-all ${
+                        darkMode ? 'hover:bg-white/10' : 'hover:bg-gray-100'
+                      }`}
+                      title={focusSoundEnabled ? 'Sound on' : 'Sound off'}
+                    >
+                      {focusSoundEnabled ? (
+                        <Volume2 className={`w-4 h-4 ${darkMode ? 'text-white/50' : 'text-gray-400'}`} />
+                      ) : (
+                        <VolumeX className={`w-4 h-4 ${darkMode ? 'text-white/30' : 'text-gray-300'}`} />
+                      )}
+                    </button>
+                    <button
+                      onClick={stopFocusMode}
+                      className={`p-1.5 rounded-lg transition-all ${
+                        darkMode ? 'hover:bg-white/10' : 'hover:bg-gray-100'
+                      }`}
+                      title="Stop focus mode"
+                    >
+                      <X className={`w-4 h-4 ${darkMode ? 'text-white/50' : 'text-gray-400'}`} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Timer Display */}
+                <div className="text-center mb-4">
+                  <div
+                    className="text-5xl font-bold tracking-tight"
+                    style={{ color: focusType === 'work' ? theme.primary : '#22c55e' }}
+                  >
+                    {formatFocusTime(focusTimeRemaining)}
+                  </div>
+                  {focusActivity && (
+                    <p className={`text-sm mt-2 truncate ${darkMode ? 'text-white/60' : 'text-gray-500'}`}>
+                      {focusActivity.activity}
+                    </p>
+                  )}
+                </div>
+
+                {/* Progress Bar */}
+                <div className={`h-2 rounded-full overflow-hidden mb-4 ${darkMode ? 'bg-white/10' : 'bg-gray-200'}`}>
+                  <div
+                    className="h-full rounded-full transition-all duration-1000"
+                    style={{
+                      width: `${((focusType === 'work' ? pomodoroSettings.workDuration * 60 : (pomodoroCount % pomodoroSettings.longBreakInterval === 0 ? pomodoroSettings.longBreak : pomodoroSettings.shortBreak) * 60) - focusTimeRemaining) / (focusType === 'work' ? pomodoroSettings.workDuration * 60 : (pomodoroCount % pomodoroSettings.longBreakInterval === 0 ? pomodoroSettings.longBreak : pomodoroSettings.shortBreak) * 60) * 100}%`,
+                      backgroundColor: focusType === 'work' ? theme.primary : '#22c55e'
+                    }}
+                  />
+                </div>
+
+                {/* Controls */}
+                <div className="flex items-center justify-center gap-3">
+                  <button
+                    onClick={() => setFocusPaused(!focusPaused)}
+                    className="p-3 rounded-xl text-white shadow-lg transition-all hover:scale-105"
+                    style={{
+                      background: focusType === 'work'
+                        ? `linear-gradient(to right, ${theme.primary}, ${theme.accent})`
+                        : 'linear-gradient(to right, #22c55e, #16a34a)'
+                    }}
+                  >
+                    {focusPaused ? <Play className="w-6 h-6" /> : <Pause className="w-6 h-6" />}
+                  </button>
+                  <button
+                    onClick={skipFocusPhase}
+                    className={`p-3 rounded-xl transition-all ${
+                      darkMode
+                        ? 'bg-white/10 hover:bg-white/20 text-white/70'
+                        : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                    }`}
+                    title={focusType === 'work' ? 'Skip to break' : 'Skip to work'}
+                  >
+                    <SkipForward className="w-5 h-5" />
+                  </button>
+                  <button
+                    onClick={stopFocusMode}
+                    className={`p-3 rounded-xl transition-all ${
+                      darkMode
+                        ? 'bg-red-500/20 hover:bg-red-500/30 text-red-400'
+                        : 'bg-red-100 hover:bg-red-200 text-red-600'
+                    }`}
+                    title="Stop"
+                  >
+                    <Square className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+            </GlassCard>
+          </div>
+        )}
+
+        {/* ===================================== */}
+        {/* KEYBOARD SHORTCUTS HELP */}
+        {/* ===================================== */}
+        {showKeyboardHelp && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+            <GlassCard darkMode={darkMode} className="w-full max-w-lg animate-scale-in max-h-[80vh] overflow-y-auto">
+              <div className="p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className={`font-bold flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                    <Keyboard className="w-5 h-5" style={{ color: theme.primary }} />
+                    Keyboard Shortcuts
+                  </h3>
+                  <button
+                    onClick={() => setShowKeyboardHelp(false)}
+                    className={`p-1.5 rounded-lg transition-all ${
+                      darkMode ? 'hover:bg-white/10' : 'hover:bg-gray-100'
+                    }`}
+                  >
+                    <X className={`w-4 h-4 ${darkMode ? 'text-white/50' : 'text-gray-400'}`} />
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  {/* Navigation */}
+                  <div>
+                    <p className={`text-xs font-medium mb-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      NAVIGATION
+                    </p>
+                    <div className="space-y-1">
+                      {[
+                        { keys: ['←', 'H'], desc: 'Previous day' },
+                        { keys: ['→', 'L'], desc: 'Next day' },
+                        { keys: ['T'], desc: 'Go to today' },
+                        { keys: ['1'], desc: 'Schedule view' },
+                        { keys: ['2'], desc: 'Dashboard view' },
+                        { keys: ['3'], desc: 'Settings view' },
+                      ].map(({ keys, desc }) => (
+                        <div key={desc} className="flex items-center justify-between">
+                          <span className={`text-sm ${darkMode ? 'text-white/70' : 'text-gray-600'}`}>{desc}</span>
+                          <div className="flex gap-1">
+                            {keys.map(k => (
+                              <kbd key={k} className={`px-2 py-1 rounded text-xs font-mono ${
+                                darkMode ? 'bg-white/10 text-white/80' : 'bg-gray-100 text-gray-700'
+                              }`}>
+                                {k}
+                              </kbd>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div>
+                    <p className={`text-xs font-medium mb-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      ACTIONS
+                    </p>
+                    <div className="space-y-1">
+                      {[
+                        { keys: ['N'], desc: 'New activity' },
+                        { keys: ['Q'], desc: 'Quick add templates' },
+                        { keys: ['F'], desc: 'Start/stop focus mode' },
+                        { keys: ['Space'], desc: 'Pause/resume focus (when active)' },
+                        { keys: ['Esc'], desc: 'Close modal / Cancel edit' },
+                      ].map(({ keys, desc }) => (
+                        <div key={desc} className="flex items-center justify-between">
+                          <span className={`text-sm ${darkMode ? 'text-white/70' : 'text-gray-600'}`}>{desc}</span>
+                          <div className="flex gap-1">
+                            {keys.map(k => (
+                              <kbd key={k} className={`px-2 py-1 rounded text-xs font-mono ${
+                                darkMode ? 'bg-white/10 text-white/80' : 'bg-gray-100 text-gray-700'
+                              }`}>
+                                {k}
+                              </kbd>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Edit */}
+                  <div>
+                    <p className={`text-xs font-medium mb-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      EDIT
+                    </p>
+                    <div className="space-y-1">
+                      {[
+                        { keys: ['Ctrl', 'Z'], desc: 'Undo' },
+                        { keys: ['Ctrl', 'Shift', 'Z'], desc: 'Redo' },
+                        { keys: ['Ctrl', 'S'], desc: 'Save changes' },
+                        { keys: ['?'], desc: 'Show this help' },
+                      ].map(({ keys, desc }) => (
+                        <div key={desc} className="flex items-center justify-between">
+                          <span className={`text-sm ${darkMode ? 'text-white/70' : 'text-gray-600'}`}>{desc}</span>
+                          <div className="flex gap-1">
+                            {keys.map(k => (
+                              <kbd key={k} className={`px-2 py-1 rounded text-xs font-mono ${
+                                darkMode ? 'bg-white/10 text-white/80' : 'bg-gray-100 text-gray-700'
+                              }`}>
+                                {k}
+                              </kbd>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setShowKeyboardHelp(false)}
                   className={`w-full mt-4 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
                     darkMode
                       ? 'bg-white/10 hover:bg-white/20 text-white/70'
@@ -2682,7 +3206,25 @@ export default function JustinSchedule() {
                     })}
                   </div>
                 </div>
-                
+
+                {/* Notes (Optional) */}
+                <div>
+                  <label className={`block text-xs font-medium mb-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                    Notes (Optional)
+                  </label>
+                  <textarea
+                    value={newItem.notes}
+                    onChange={(e) => setNewItem({ ...newItem, notes: e.target.value })}
+                    placeholder="Add notes, reminders, or details..."
+                    rows={2}
+                    className={`w-full px-4 py-3 rounded-xl border-2 transition-all outline-none resize-none ${
+                      darkMode
+                        ? 'bg-white/5 border-white/10 text-white placeholder-white/30 focus:border-white/30'
+                        : 'bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:border-gray-300'
+                    }`}
+                  />
+                </div>
+
                 {/* Action Buttons */}
                 <div className="flex gap-2 justify-end pt-2">
                   <button
@@ -3078,13 +3620,29 @@ export default function JustinSchedule() {
                               />
                             </div>
                           </div>
-                          
+
+                          {/* Notes Field */}
+                          <div className="flex items-start gap-2">
+                            <MessageSquare className={`w-4 h-4 mt-2.5 ${darkMode ? 'text-white/40' : 'text-gray-400'}`} />
+                            <textarea
+                              value={editValues.notes}
+                              onChange={(e) => setEditValues({ ...editValues, notes: e.target.value })}
+                              placeholder="Add notes..."
+                              rows={2}
+                              className={`flex-1 px-3 py-2 rounded-lg border-2 transition-all outline-none text-xs resize-none ${
+                                darkMode
+                                  ? 'bg-white/5 border-white/10 text-white placeholder-white/30 focus:border-white/30'
+                                  : 'bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:border-gray-300'
+                              }`}
+                            />
+                          </div>
+
                           <div className="flex gap-2 justify-end">
                             <button
                               onClick={() => deleteItem(item.id)}
                               className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-all ${
-                                darkMode 
-                                  ? 'bg-red-500/20 hover:bg-red-500/30 text-red-400' 
+                                darkMode
+                                  ? 'bg-red-500/20 hover:bg-red-500/30 text-red-400'
                                   : 'bg-red-100 hover:bg-red-200 text-red-700'
                               }`}
                             >
@@ -3129,8 +3687,11 @@ export default function JustinSchedule() {
                             {item.special && (
                               <Sparkles className="w-4 h-4 text-amber-400 flex-shrink-0" />
                             )}
+                            {item.notes && (
+                              <MessageSquare className={`w-3.5 h-3.5 flex-shrink-0 ${darkMode ? 'text-white/40' : 'text-gray-400'}`} title="Has notes" />
+                            )}
                             {isCurrent && (
-                              <span 
+                              <span
                                 className="px-2 py-0.5 rounded-full text-xs font-bold text-white animate-pulse"
                                 style={{ backgroundColor: catInfo.accent }}
                               >
@@ -3145,6 +3706,14 @@ export default function JustinSchedule() {
                             </span>
                             <span>•</span>
                             <span>{formatDuration(item.duration)}</span>
+                            {item.notes && (
+                              <>
+                                <span>•</span>
+                                <span className="truncate max-w-[100px]" title={item.notes}>
+                                  {item.notes.length > 20 ? item.notes.substring(0, 20) + '...' : item.notes}
+                                </span>
+                              </>
+                            )}
                           </div>
                         </div>
                       )}
