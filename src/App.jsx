@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { 
-  Calendar, Clock, Moon, Sun, ChevronLeft, ChevronRight, 
+import {
+  Calendar, Clock, Moon, Sun, ChevronLeft, ChevronRight,
   GripVertical, Save, RotateCcw, Check, X, Plus, Trash2,
-  Briefcase, Coffee, Home, Heart, Utensils, Car, Dumbbell, 
+  Briefcase, Coffee, Home, Heart, Utensils, Car, Dumbbell,
   Music, Star, Sparkles, Settings, BarChart3, TrendingUp,
   Award, Zap, Cloud, CloudOff, Loader2, Palette, CalendarCheck,
   Download, ExternalLink, RefreshCw, Copy, Timer, Layers,
-  ChevronUp, ChevronDown, Minus
+  ChevronUp, ChevronDown, Minus, Bell, BellOff, Target, Search,
+  Filter, AlertCircle
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
@@ -449,6 +450,31 @@ export default function JustinSchedule() {
   const swipeStartX = useRef(null);
   const swipeThreshold = 80;
 
+  // Notification state
+  const [notificationsEnabled, setNotificationsEnabled] = useState(() => {
+    const saved = localStorage.getItem('notificationsEnabled');
+    return saved ? JSON.parse(saved) : false;
+  });
+  const [notificationTiming, setNotificationTiming] = useState(() => {
+    const saved = localStorage.getItem('notificationTiming');
+    return saved ? parseInt(saved) : 5; // minutes before activity
+  });
+  const [notifiedActivities, setNotifiedActivities] = useState(new Set());
+  const lastNotificationCheck = useRef(null);
+
+  // Weekly Goals state
+  const [weeklyGoals, setWeeklyGoals] = useState(() => {
+    const saved = localStorage.getItem('weeklyGoals');
+    return saved ? JSON.parse(saved) : {};
+  });
+  const [showGoalEditor, setShowGoalEditor] = useState(false);
+  const [editingGoal, setEditingGoal] = useState({ category: '', hours: 0 });
+
+  // Search & Filter state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [showFilters, setShowFilters] = useState(false);
+
   // Activity Templates for Quick Add
   const activityTemplates = [
     { emoji: '☕', name: 'Coffee Break', duration: 15, category: 'Personal' },
@@ -472,6 +498,120 @@ export default function JustinSchedule() {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // Save notification settings to localStorage
+  useEffect(() => {
+    localStorage.setItem('notificationsEnabled', JSON.stringify(notificationsEnabled));
+    localStorage.setItem('notificationTiming', notificationTiming.toString());
+  }, [notificationsEnabled, notificationTiming]);
+
+  // Save weekly goals to localStorage
+  useEffect(() => {
+    localStorage.setItem('weeklyGoals', JSON.stringify(weeklyGoals));
+  }, [weeklyGoals]);
+
+  // Request notification permission
+  const requestNotificationPermission = async () => {
+    if (!('Notification' in window)) {
+      alert('This browser does not support notifications');
+      return false;
+    }
+
+    if (Notification.permission === 'granted') {
+      setNotificationsEnabled(true);
+      return true;
+    }
+
+    if (Notification.permission !== 'denied') {
+      const permission = await Notification.requestPermission();
+      if (permission === 'granted') {
+        setNotificationsEnabled(true);
+        return true;
+      }
+    }
+
+    alert('Please enable notifications in your browser settings');
+    return false;
+  };
+
+  // Send notification
+  const sendNotification = (title, body, icon = '📅') => {
+    if (!notificationsEnabled || Notification.permission !== 'granted') return;
+
+    const notification = new Notification(title, {
+      body,
+      icon: '/favicon.ico',
+      badge: '/favicon.ico',
+      tag: 'schedule-notification',
+      requireInteraction: false,
+      silent: false
+    });
+
+    notification.onclick = () => {
+      window.focus();
+      notification.close();
+    };
+
+    setTimeout(() => notification.close(), 10000);
+  };
+
+  // Check for upcoming activities and send notifications
+  useEffect(() => {
+    if (!notificationsEnabled) return;
+
+    const checkUpcomingActivities = () => {
+      const now = new Date();
+      const currentMinutes = now.getHours() * 60 + now.getMinutes();
+      const dayName = days[now.getDay() === 0 ? 6 : now.getDay() - 1];
+      const todaySchedule = schedule[dayName] || [];
+
+      // Reset notified activities at midnight
+      if (lastNotificationCheck.current) {
+        const lastDate = new Date(lastNotificationCheck.current);
+        if (lastDate.getDate() !== now.getDate()) {
+          setNotifiedActivities(new Set());
+        }
+      }
+      lastNotificationCheck.current = now.getTime();
+
+      todaySchedule.forEach(item => {
+        const itemStart = parseTimeToMinutes(item.time);
+        const minutesUntilStart = itemStart - currentMinutes;
+        const notificationKey = `${item.id}-${now.toDateString()}`;
+
+        // Check if we should notify (within timing window and not already notified)
+        if (minutesUntilStart > 0 &&
+            minutesUntilStart <= notificationTiming &&
+            !notifiedActivities.has(notificationKey)) {
+
+          sendNotification(
+            `⏰ Starting in ${minutesUntilStart} min`,
+            item.activity,
+            item.special ? '⭐' : '📅'
+          );
+
+          setNotifiedActivities(prev => new Set([...prev, notificationKey]));
+        }
+
+        // Notify when activity starts
+        if (minutesUntilStart === 0 && !notifiedActivities.has(`${notificationKey}-start`)) {
+          sendNotification(
+            '🎯 Activity Starting Now!',
+            item.activity,
+            item.special ? '⭐' : '🚀'
+          );
+
+          setNotifiedActivities(prev => new Set([...prev, `${notificationKey}-start`]));
+        }
+      });
+    };
+
+    // Check every 30 seconds
+    const interval = setInterval(checkUpcomingActivities, 30000);
+    checkUpcomingActivities(); // Initial check
+
+    return () => clearInterval(interval);
+  }, [notificationsEnabled, notificationTiming, schedule, notifiedActivities]);
 
   // Load schedule from cloud
   useEffect(() => {
@@ -532,11 +672,32 @@ export default function JustinSchedule() {
     return selectedDay === today && item.id === currentActivity.id;
   }, [currentActivity, currentTime, selectedDay]);
 
-  // Filter schedule
+  // Filter schedule with search and category filter
   const filteredSchedule = useMemo(() => {
-    const daySchedule = schedule[selectedDay] || [];
-    return showTransitions ? daySchedule : daySchedule.filter(item => item.category !== 'Transition');
-  }, [schedule, selectedDay, showTransitions]);
+    let daySchedule = schedule[selectedDay] || [];
+
+    // Filter out transitions if needed
+    if (!showTransitions) {
+      daySchedule = daySchedule.filter(item => item.category !== 'Transition');
+    }
+
+    // Apply category filter
+    if (categoryFilter !== 'all') {
+      daySchedule = daySchedule.filter(item => item.category === categoryFilter);
+    }
+
+    // Apply search query
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      daySchedule = daySchedule.filter(item =>
+        item.activity.toLowerCase().includes(query) ||
+        item.category.toLowerCase().includes(query) ||
+        item.time.toLowerCase().includes(query)
+      );
+    }
+
+    return daySchedule;
+  }, [schedule, selectedDay, showTransitions, categoryFilter, searchQuery]);
 
   // Calculate stats
   const stats = useMemo(() => {
@@ -558,6 +719,46 @@ export default function JustinSchedule() {
 
     return result;
   }, [schedule, selectedDay]);
+
+  // Calculate goal progress
+  const goalProgress = useMemo(() => {
+    const progress = {};
+    Object.entries(weeklyGoals).forEach(([category, goalHours]) => {
+      const actualMinutes = stats[category]?.weekly || 0;
+      const goalMinutes = goalHours * 60;
+      const percentage = goalMinutes > 0 ? Math.min(100, (actualMinutes / goalMinutes) * 100) : 0;
+      progress[category] = {
+        goalMinutes,
+        actualMinutes,
+        percentage,
+        remaining: Math.max(0, goalMinutes - actualMinutes),
+        exceeded: actualMinutes > goalMinutes
+      };
+    });
+    return progress;
+  }, [weeklyGoals, stats]);
+
+  // Save goal
+  const saveGoal = (category, hours) => {
+    if (hours <= 0) {
+      const newGoals = { ...weeklyGoals };
+      delete newGoals[category];
+      setWeeklyGoals(newGoals);
+    } else {
+      setWeeklyGoals({ ...weeklyGoals, [category]: hours });
+    }
+    setShowGoalEditor(false);
+    setEditingGoal({ category: '', hours: 0 });
+  };
+
+  // Start editing a goal
+  const startGoalEdit = (category) => {
+    setEditingGoal({
+      category,
+      hours: weeklyGoals[category] || Math.round((stats[category]?.weekly || 0) / 60)
+    });
+    setShowGoalEditor(true);
+  };
 
   // Recalculate times
   const recalculateTimes = useCallback((daySchedule) => {
@@ -1277,6 +1478,107 @@ export default function JustinSchedule() {
         {/* ===================================== */}
         {view === 'settings' && (
           <>
+          {/* Notifications Settings */}
+          <GlassCard darkMode={darkMode} className="mb-4">
+            <div className="p-5">
+              <h3 className={`text-lg font-bold mb-4 flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                <Bell className="w-5 h-5" style={{ color: theme.primary }} />
+                Notifications
+              </h3>
+
+              {/* Notification Permission Status */}
+              <div className={`flex items-center justify-between p-4 rounded-xl mb-4 ${
+                darkMode ? 'bg-white/5' : 'bg-gray-50'
+              }`}>
+                <div className="flex items-center gap-3">
+                  {notificationsEnabled && Notification.permission === 'granted' ? (
+                    <div className="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center">
+                      <Bell className="w-5 h-5 text-green-500" />
+                    </div>
+                  ) : (
+                    <div className="w-10 h-10 rounded-full bg-gray-500/20 flex items-center justify-center">
+                      <BellOff className={`w-5 h-5 ${darkMode ? 'text-white/40' : 'text-gray-400'}`} />
+                    </div>
+                  )}
+                  <div>
+                    <p className={`font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                      {notificationsEnabled && Notification.permission === 'granted'
+                        ? 'Notifications Enabled'
+                        : 'Notifications Disabled'}
+                    </p>
+                    <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      Get reminded before activities start
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    if (notificationsEnabled) {
+                      setNotificationsEnabled(false);
+                    } else {
+                      requestNotificationPermission();
+                    }
+                  }}
+                  className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${
+                    notificationsEnabled
+                      ? darkMode
+                        ? 'bg-red-500/20 hover:bg-red-500/30 text-red-400'
+                        : 'bg-red-100 hover:bg-red-200 text-red-700'
+                      : 'text-white shadow-lg'
+                  }`}
+                  style={!notificationsEnabled ? {
+                    background: `linear-gradient(to right, ${theme.primary}, ${theme.accent})`
+                  } : {}}
+                >
+                  {notificationsEnabled ? 'Disable' : 'Enable'}
+                </button>
+              </div>
+
+              {/* Notification Timing */}
+              {notificationsEnabled && (
+                <div className="space-y-3 animate-fade-in">
+                  <p className={`text-sm font-medium ${darkMode ? 'text-white/70' : 'text-gray-600'}`}>
+                    Notify me before activity starts:
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {[1, 5, 10, 15, 30].map(mins => (
+                      <button
+                        key={mins}
+                        onClick={() => setNotificationTiming(mins)}
+                        className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${
+                          notificationTiming === mins
+                            ? 'text-white shadow-lg'
+                            : darkMode
+                              ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                              : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                        }`}
+                        style={notificationTiming === mins ? {
+                          background: `linear-gradient(to right, ${theme.primary}, ${theme.accent})`
+                        } : {}}
+                      >
+                        {mins} min
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Test Notification */}
+                  <button
+                    onClick={() => sendNotification('Test Notification', 'Notifications are working correctly!')}
+                    className={`mt-3 px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${
+                      darkMode
+                        ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                        : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                    }`}
+                  >
+                    <Bell className="w-4 h-4" />
+                    Test Notification
+                  </button>
+                </div>
+              )}
+            </div>
+          </GlassCard>
+
+          {/* Theme Settings */}
           <GlassCard darkMode={darkMode} className="mb-4">
             <div className="p-5">
               <h3 className={`text-lg font-bold mb-4 flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
@@ -1411,6 +1713,269 @@ export default function JustinSchedule() {
         {/* DASHBOARD VIEW */}
         {/* ===================================== */}
         {view === 'dashboard' && (
+          <>
+          {/* Weekly Goals Section */}
+          <GlassCard darkMode={darkMode} className="mb-4" glow glowColor={theme.accent}>
+            <div className="p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className={`text-lg font-bold flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                  <Target className="w-5 h-5" style={{ color: theme.accent }} />
+                  Weekly Goals
+                </h3>
+                <button
+                  onClick={() => setShowGoalEditor(!showGoalEditor)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                    showGoalEditor
+                      ? 'text-white shadow-md'
+                      : darkMode
+                        ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                        : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                  }`}
+                  style={showGoalEditor ? {
+                    background: `linear-gradient(to right, ${theme.primary}, ${theme.accent})`
+                  } : {}}
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  {showGoalEditor ? 'Done' : 'Set Goals'}
+                </button>
+              </div>
+
+              {/* Goal Editor */}
+              {showGoalEditor && (
+                <div className={`mb-4 p-4 rounded-xl animate-scale-in ${darkMode ? 'bg-white/5' : 'bg-gray-50'}`}>
+                  <p className={`text-sm font-medium mb-3 ${darkMode ? 'text-white/70' : 'text-gray-600'}`}>
+                    Set weekly time goals by category:
+                  </p>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {categoryList.map(cat => {
+                      const catInfo = categories[cat];
+                      const hasGoal = weeklyGoals[cat];
+                      const Icon = catInfo.icon;
+                      return (
+                        <button
+                          key={cat}
+                          onClick={() => startGoalEdit(cat)}
+                          className={`p-3 rounded-xl text-left transition-all hover:scale-[1.02] ${
+                            hasGoal
+                              ? ''
+                              : darkMode
+                                ? 'bg-white/5 hover:bg-white/10'
+                                : 'bg-white hover:bg-gray-100'
+                          }`}
+                          style={hasGoal ? {
+                            backgroundColor: `${catInfo.accent}20`,
+                            borderLeft: `3px solid ${catInfo.accent}`
+                          } : {}}
+                        >
+                          <div className="flex items-center gap-2 mb-1">
+                            <Icon className="w-4 h-4" style={{ color: catInfo.accent }} />
+                            <span className={`text-xs font-medium truncate ${darkMode ? 'text-white/70' : 'text-gray-600'}`}>
+                              {cat}
+                            </span>
+                          </div>
+                          <span className={`text-sm font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                            {hasGoal ? `${weeklyGoals[cat]}h / week` : 'Set goal'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Active Goals Progress */}
+              {Object.keys(weeklyGoals).length > 0 ? (
+                <div className="space-y-3">
+                  {Object.entries(goalProgress)
+                    .sort((a, b) => b[1].percentage - a[1].percentage)
+                    .map(([category, progress]) => {
+                      const catInfo = categories[category];
+                      const Icon = catInfo?.icon || Star;
+                      return (
+                        <div
+                          key={category}
+                          className={`p-4 rounded-xl transition-all ${
+                            darkMode ? 'bg-white/5' : 'bg-gray-50'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <div
+                                className="w-8 h-8 rounded-lg flex items-center justify-center"
+                                style={{ backgroundColor: `${catInfo?.accent}20` }}
+                              >
+                                <Icon className="w-4 h-4" style={{ color: catInfo?.accent }} />
+                              </div>
+                              <div>
+                                <p className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                                  {category}
+                                </p>
+                                <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                                  {formatDuration(progress.actualMinutes)} / {formatDuration(progress.goalMinutes)}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className={`text-lg font-bold ${
+                                progress.exceeded
+                                  ? 'text-green-500'
+                                  : progress.percentage >= 80
+                                    ? darkMode ? 'text-white' : 'text-gray-900'
+                                    : progress.percentage >= 50
+                                      ? 'text-yellow-500'
+                                      : 'text-orange-500'
+                              }`}>
+                                {Math.round(progress.percentage)}%
+                              </p>
+                              {progress.exceeded && (
+                                <p className="text-xs text-green-500 flex items-center gap-1">
+                                  <Check className="w-3 h-3" /> Goal reached!
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                          {/* Progress Bar */}
+                          <div className={`h-2 rounded-full overflow-hidden ${darkMode ? 'bg-white/10' : 'bg-gray-200'}`}>
+                            <div
+                              className="h-full rounded-full transition-all duration-500"
+                              style={{
+                                width: `${Math.min(100, progress.percentage)}%`,
+                                backgroundColor: progress.exceeded ? '#22c55e' : catInfo?.accent
+                              }}
+                            />
+                          </div>
+                          {!progress.exceeded && progress.remaining > 0 && (
+                            <p className={`text-xs mt-2 ${darkMode ? 'text-white/40' : 'text-gray-400'}`}>
+                              {formatDuration(progress.remaining)} remaining this week
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
+              ) : (
+                <div className={`text-center py-6 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                  <Target className="w-10 h-10 mx-auto mb-3 opacity-50" />
+                  <p className="font-medium mb-1">No goals set yet</p>
+                  <p className="text-sm opacity-75">
+                    Click "Set Goals" to track your weekly time targets
+                  </p>
+                </div>
+              )}
+            </div>
+          </GlassCard>
+
+          {/* Goal Editor Modal */}
+          {editingGoal.category && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+              <GlassCard darkMode={darkMode} className="w-full max-w-sm animate-scale-in">
+                <div className="p-5">
+                  <h3 className={`font-bold mb-4 flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                    <Target className="w-5 h-5" style={{ color: categories[editingGoal.category]?.accent }} />
+                    Set {editingGoal.category} Goal
+                  </h3>
+
+                  <div className="mb-4">
+                    <label className={`block text-xs font-medium mb-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      Hours per week
+                    </label>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => setEditingGoal({ ...editingGoal, hours: Math.max(0, editingGoal.hours - 1) })}
+                        className={`p-2 rounded-lg transition-all ${
+                          darkMode ? 'bg-white/10 hover:bg-white/20' : 'bg-gray-100 hover:bg-gray-200'
+                        }`}
+                      >
+                        <Minus className={`w-4 h-4 ${darkMode ? 'text-white' : 'text-gray-600'}`} />
+                      </button>
+                      <input
+                        type="number"
+                        value={editingGoal.hours}
+                        onChange={(e) => setEditingGoal({ ...editingGoal, hours: Math.max(0, parseInt(e.target.value) || 0) })}
+                        className={`w-20 text-center px-3 py-2 rounded-xl border-2 transition-all outline-none text-lg font-bold ${
+                          darkMode
+                            ? 'bg-white/5 border-white/10 text-white focus:border-white/30'
+                            : 'bg-white border-gray-200 text-gray-900 focus:border-gray-300'
+                        }`}
+                        min="0"
+                        max="168"
+                      />
+                      <button
+                        onClick={() => setEditingGoal({ ...editingGoal, hours: Math.min(168, editingGoal.hours + 1) })}
+                        className={`p-2 rounded-lg transition-all ${
+                          darkMode ? 'bg-white/10 hover:bg-white/20' : 'bg-gray-100 hover:bg-gray-200'
+                        }`}
+                      >
+                        <Plus className={`w-4 h-4 ${darkMode ? 'text-white' : 'text-gray-600'}`} />
+                      </button>
+                    </div>
+                    <p className={`text-xs mt-2 ${darkMode ? 'text-white/40' : 'text-gray-400'}`}>
+                      Current: {formatDuration(stats[editingGoal.category]?.weekly || 0)} this week
+                    </p>
+                  </div>
+
+                  {/* Quick Presets */}
+                  <div className="flex flex-wrap gap-2 mb-4">
+                    {[5, 10, 15, 20, 30, 40].map(h => (
+                      <button
+                        key={h}
+                        onClick={() => setEditingGoal({ ...editingGoal, hours: h })}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                          editingGoal.hours === h
+                            ? 'text-white shadow-md'
+                            : darkMode
+                              ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                              : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                        }`}
+                        style={editingGoal.hours === h ? {
+                          background: categories[editingGoal.category]?.accent
+                        } : {}}
+                      >
+                        {h}h
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex gap-2">
+                    {weeklyGoals[editingGoal.category] && (
+                      <button
+                        onClick={() => saveGoal(editingGoal.category, 0)}
+                        className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                          darkMode
+                            ? 'bg-red-500/20 hover:bg-red-500/30 text-red-400'
+                            : 'bg-red-100 hover:bg-red-200 text-red-700'
+                        }`}
+                      >
+                        Remove
+                      </button>
+                    )}
+                    <button
+                      onClick={() => { setEditingGoal({ category: '', hours: 0 }); }}
+                      className={`flex-1 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                        darkMode
+                          ? 'bg-white/5 hover:bg-white/10 text-white/70'
+                          : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                      }`}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => saveGoal(editingGoal.category, editingGoal.hours)}
+                      disabled={editingGoal.hours <= 0}
+                      className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium text-white shadow-lg transition-all hover:scale-[1.02] disabled:opacity-50 disabled:hover:scale-100"
+                      style={{
+                        background: `linear-gradient(to right, ${theme.primary}, ${theme.accent})`
+                      }}
+                    >
+                      Save Goal
+                    </button>
+                  </div>
+                </div>
+              </GlassCard>
+            </div>
+          )}
+
+          {/* Analytics Section */}
           <GlassCard darkMode={darkMode} className="mb-4">
             <div className="p-5">
               <h3 className={`text-lg font-bold mb-4 flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
@@ -1498,6 +2063,7 @@ export default function JustinSchedule() {
               </div>
             </div>
           </GlassCard>
+          </>
         )}
 
         {/* ===================================== */}
@@ -1637,11 +2203,136 @@ export default function JustinSchedule() {
         )}
 
         {/* ===================================== */}
+        {/* SEARCH & FILTER BAR */}
+        {/* ===================================== */}
+        {view === 'schedule' && (
+          <GlassCard darkMode={darkMode} className="mb-4">
+            <div className="p-4">
+              {/* Search Input */}
+              <div className="flex items-center gap-2 mb-3">
+                <div className={`flex-1 flex items-center gap-2 px-4 py-2.5 rounded-xl border-2 transition-all ${
+                  darkMode
+                    ? 'bg-white/5 border-white/10 focus-within:border-white/30'
+                    : 'bg-white border-gray-200 focus-within:border-gray-300'
+                }`}>
+                  <Search className={`w-4 h-4 flex-shrink-0 ${darkMode ? 'text-white/40' : 'text-gray-400'}`} />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search activities..."
+                    className={`flex-1 bg-transparent outline-none text-sm ${
+                      darkMode ? 'text-white placeholder-white/40' : 'text-gray-900 placeholder-gray-400'
+                    }`}
+                  />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery('')}
+                      className={`p-1 rounded-full transition-all ${
+                        darkMode ? 'hover:bg-white/10' : 'hover:bg-gray-100'
+                      }`}
+                    >
+                      <X className={`w-3.5 h-3.5 ${darkMode ? 'text-white/50' : 'text-gray-400'}`} />
+                    </button>
+                  )}
+                </div>
+                <button
+                  onClick={() => setShowFilters(!showFilters)}
+                  className={`p-2.5 rounded-xl transition-all ${
+                    showFilters || categoryFilter !== 'all'
+                      ? 'text-white shadow-lg'
+                      : darkMode
+                        ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                        : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                  }`}
+                  style={showFilters || categoryFilter !== 'all' ? {
+                    background: `linear-gradient(to right, ${theme.primary}, ${theme.accent})`
+                  } : {}}
+                >
+                  <Filter className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Category Filter Pills */}
+              {showFilters && (
+                <div className="flex flex-wrap gap-2 mb-3 animate-fade-in">
+                  <button
+                    onClick={() => setCategoryFilter('all')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                      categoryFilter === 'all'
+                        ? 'text-white shadow-md'
+                        : darkMode
+                          ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                          : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                    }`}
+                    style={categoryFilter === 'all' ? {
+                      background: `linear-gradient(to right, ${theme.primary}, ${theme.accent})`
+                    } : {}}
+                  >
+                    All
+                  </button>
+                  {categoryList.map(cat => {
+                    const catInfo = categories[cat];
+                    return (
+                      <button
+                        key={cat}
+                        onClick={() => setCategoryFilter(categoryFilter === cat ? 'all' : cat)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                          categoryFilter === cat
+                            ? 'text-white shadow-md'
+                            : darkMode
+                              ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                              : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                        }`}
+                        style={categoryFilter === cat ? {
+                          background: catInfo.accent
+                        } : {}}
+                      >
+                        {cat}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Active Filter Badge */}
+              {(searchQuery || categoryFilter !== 'all') && (
+                <div className={`flex items-center gap-2 mb-3 text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                  <span>Showing {filteredSchedule.length} activities</span>
+                  {(searchQuery || categoryFilter !== 'all') && (
+                    <button
+                      onClick={() => { setSearchQuery(''); setCategoryFilter('all'); }}
+                      className={`px-2 py-1 rounded-lg transition-all ${
+                        darkMode ? 'bg-white/10 hover:bg-white/20' : 'bg-gray-200 hover:bg-gray-300'
+                      }`}
+                    >
+                      Clear filters
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </GlassCard>
+        )}
+
+        {/* ===================================== */}
         {/* SCHEDULE LIST */}
         {/* ===================================== */}
         {view === 'schedule' && (
           <GlassCard darkMode={darkMode} className="mb-4">
             <div className="p-4">
+              {/* Empty State */}
+              {filteredSchedule.length === 0 && (
+                <div className={`text-center py-8 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                  <Search className="w-10 h-10 mx-auto mb-3 opacity-50" />
+                  <p className="font-medium mb-1">No activities found</p>
+                  <p className="text-sm opacity-75">
+                    {searchQuery || categoryFilter !== 'all'
+                      ? 'Try adjusting your search or filters'
+                      : 'Add some activities to get started'}
+                  </p>
+                </div>
+              )}
               <div className="space-y-2">
                 {filteredSchedule.map((item, index) => {
                   const catInfo = categories[item.category] || categories['Personal'];
