@@ -11,7 +11,8 @@ import {
   History, Archive, Play, Pause, Square, SkipForward, MessageSquare,
   Keyboard, Volume2, VolumeX, Repeat, LayoutGrid, LineChart,
   Flame, CalendarDays, Eye, EyeOff, Printer, FileText, AlertTriangle,
-  Wand2, Clock3, LayoutList
+  Wand2, Clock3, LayoutList, BookOpen, PenLine, Trophy, Gauge,
+  Library, FolderPlus, BookMarked, Percent
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
@@ -546,6 +547,34 @@ export default function JustinSchedule() {
     preferredDays: [],
     preferredTimeRange: 'any' // 'morning', 'afternoon', 'evening', 'any'
   });
+
+  // Weekly Review state
+  const [showWeeklyReview, setShowWeeklyReview] = useState(false);
+  const [weeklyReflections, setWeeklyReflections] = useState(() => {
+    const saved = localStorage.getItem('weeklyReflections');
+    return saved ? JSON.parse(saved) : {};
+  });
+  const [currentReflection, setCurrentReflection] = useState({
+    wentWell: '',
+    toImprove: '',
+    nextWeekIntentions: ''
+  });
+
+  // Time Budget state
+  const [categoryBudgets, setCategoryBudgets] = useState(() => {
+    const saved = localStorage.getItem('categoryBudgets');
+    return saved ? JSON.parse(saved) : {};
+  });
+  const [showBudgetSettings, setShowBudgetSettings] = useState(false);
+
+  // Custom Templates Library state
+  const [customTemplates, setCustomTemplates] = useState(() => {
+    const saved = localStorage.getItem('customTemplates');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [showTemplateLibrary, setShowTemplateLibrary] = useState(false);
+  const [showSaveTemplate, setShowSaveTemplate] = useState(null);
+  const [newTemplateName, setNewTemplateName] = useState('');
 
   // Activity Templates for Quick Add
   const activityTemplates = [
@@ -1426,6 +1455,163 @@ export default function JustinSchedule() {
     };
     return emojiMap[category] || '📌';
   };
+
+  // Save weekly reflections to localStorage
+  useEffect(() => {
+    localStorage.setItem('weeklyReflections', JSON.stringify(weeklyReflections));
+  }, [weeklyReflections]);
+
+  // Save category budgets to localStorage
+  useEffect(() => {
+    localStorage.setItem('categoryBudgets', JSON.stringify(categoryBudgets));
+  }, [categoryBudgets]);
+
+  // Save custom templates to localStorage
+  useEffect(() => {
+    localStorage.setItem('customTemplates', JSON.stringify(customTemplates));
+  }, [customTemplates]);
+
+  // Get current week number for reflections
+  const getCurrentWeekKey = () => {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), 0, 1);
+    const diff = now - start;
+    const oneWeek = 1000 * 60 * 60 * 24 * 7;
+    const weekNum = Math.floor(diff / oneWeek);
+    return `${now.getFullYear()}-W${weekNum}`;
+  };
+
+  // Calculate time spent per category this week
+  const categoryTimeSpent = useMemo(() => {
+    const timeSpent = {};
+    days.forEach(day => {
+      const daySchedule = schedule[day] || [];
+      daySchedule.forEach(activity => {
+        const cat = activity.category;
+        timeSpent[cat] = (timeSpent[cat] || 0) + activity.duration;
+      });
+    });
+    return timeSpent;
+  }, [schedule]);
+
+  // Calculate budget usage percentages
+  const budgetUsage = useMemo(() => {
+    const usage = {};
+    Object.keys(categoryBudgets).forEach(category => {
+      const budget = categoryBudgets[category];
+      const spent = categoryTimeSpent[category] || 0;
+      usage[category] = {
+        budget: budget,
+        spent: spent,
+        percentage: budget > 0 ? Math.round((spent / budget) * 100) : 0,
+        remaining: budget - spent,
+        isOver: spent > budget
+      };
+    });
+    return usage;
+  }, [categoryBudgets, categoryTimeSpent]);
+
+  // Get categories that are near or over budget
+  const budgetWarnings = useMemo(() => {
+    const warnings = [];
+    Object.entries(budgetUsage).forEach(([category, data]) => {
+      if (data.percentage >= 90) {
+        warnings.push({
+          category,
+          ...data,
+          severity: data.isOver ? 'over' : 'warning'
+        });
+      }
+    });
+    return warnings.sort((a, b) => b.percentage - a.percentage);
+  }, [budgetUsage]);
+
+  // Save weekly reflection
+  const saveWeeklyReflection = useCallback(() => {
+    const weekKey = getCurrentWeekKey();
+    setWeeklyReflections(prev => ({
+      ...prev,
+      [weekKey]: {
+        ...currentReflection,
+        savedAt: new Date().toISOString(),
+        stats: { ...stats }
+      }
+    }));
+    setCurrentReflection({ wentWell: '', toImprove: '', nextWeekIntentions: '' });
+  }, [currentReflection, stats]);
+
+  // Load reflection for current week if exists
+  useEffect(() => {
+    const weekKey = getCurrentWeekKey();
+    if (weeklyReflections[weekKey]) {
+      setCurrentReflection({
+        wentWell: weeklyReflections[weekKey].wentWell || '',
+        toImprove: weeklyReflections[weekKey].toImprove || '',
+        nextWeekIntentions: weeklyReflections[weekKey].nextWeekIntentions || ''
+      });
+    }
+  }, [showWeeklyReview]);
+
+  // Save activity as custom template
+  const saveAsTemplate = useCallback((activity, templateName) => {
+    const template = {
+      id: generateId(),
+      name: templateName || activity.activity,
+      emoji: activity.emoji,
+      activity: activity.activity,
+      duration: activity.duration,
+      category: activity.category,
+      notes: activity.notes || '',
+      createdAt: new Date().toISOString()
+    };
+    setCustomTemplates(prev => [...prev, template]);
+    setShowSaveTemplate(null);
+    setNewTemplateName('');
+  }, []);
+
+  // Delete custom template
+  const deleteTemplate = useCallback((templateId) => {
+    setCustomTemplates(prev => prev.filter(t => t.id !== templateId));
+  }, []);
+
+  // Add activity from template
+  const addFromTemplate = useCallback((template, day) => {
+    pushToUndoStack(schedule);
+    const newActivity = {
+      id: generateId(),
+      time: '9:00 AM',
+      activity: template.activity,
+      duration: template.duration,
+      category: template.category,
+      emoji: template.emoji,
+      notes: template.notes || ''
+    };
+
+    const targetDay = day || selectedDay;
+    const daySchedule = schedule[targetDay] || [];
+    const newSchedule = {
+      ...schedule,
+      [targetDay]: [...daySchedule, newActivity].sort((a, b) =>
+        parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time)
+      )
+    };
+
+    setSchedule(newSchedule);
+    setHasChanges(true);
+  }, [schedule, selectedDay, pushToUndoStack]);
+
+  // Set category budget
+  const setCategoryBudget = useCallback((category, minutes) => {
+    if (minutes > 0) {
+      setCategoryBudgets(prev => ({ ...prev, [category]: minutes }));
+    } else {
+      setCategoryBudgets(prev => {
+        const newBudgets = { ...prev };
+        delete newBudgets[category];
+        return newBudgets;
+      });
+    }
+  }, []);
 
   // Log today's activities for statistics (run once per day)
   useEffect(() => {
@@ -3530,6 +3716,514 @@ export default function JustinSchedule() {
         )}
 
         {/* ===================================== */}
+        {/* WEEKLY REVIEW MODAL */}
+        {/* ===================================== */}
+        {showWeeklyReview && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+            <GlassCard darkMode={darkMode} className="w-full max-w-lg animate-scale-in max-h-[90vh] overflow-y-auto">
+              <div className="p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className={`font-bold flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                    <BookOpen className="w-5 h-5" style={{ color: theme.primary }} />
+                    Weekly Review
+                  </h3>
+                  <button
+                    onClick={() => setShowWeeklyReview(false)}
+                    className={`p-1.5 rounded-lg transition-all ${darkMode ? 'hover:bg-white/10' : 'hover:bg-gray-100'}`}
+                  >
+                    <X className={`w-4 h-4 ${darkMode ? 'text-white/50' : 'text-gray-400'}`} />
+                  </button>
+                </div>
+
+                {/* Week Stats Summary */}
+                <div className={`p-4 rounded-xl mb-4 ${darkMode ? 'bg-white/5' : 'bg-gray-50'}`}>
+                  <div className="flex items-center gap-3 mb-3">
+                    <Trophy className="w-6 h-6 text-amber-500" />
+                    <div>
+                      <p className={`font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                        Week Summary
+                      </p>
+                      <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                        {getCurrentWeekKey()}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="text-center">
+                      <p className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                        {stats.totalActivities}
+                      </p>
+                      <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>Activities</p>
+                    </div>
+                    <div className="text-center">
+                      <p className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                        {formatDuration(stats.totalTime)}
+                      </p>
+                      <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>Total Time</p>
+                    </div>
+                    <div className="text-center">
+                      <p className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                        {Object.keys(stats.categoryBreakdown).length}
+                      </p>
+                      <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>Categories</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Reflection Prompts */}
+                <div className="space-y-4 mb-4">
+                  <div>
+                    <label className={`text-xs font-medium mb-1.5 flex items-center gap-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      <Star className="w-3 h-3 text-green-500" />
+                      WHAT WENT WELL THIS WEEK?
+                    </label>
+                    <textarea
+                      value={currentReflection.wentWell}
+                      onChange={(e) => setCurrentReflection(prev => ({ ...prev, wentWell: e.target.value }))}
+                      placeholder="Celebrate your wins..."
+                      rows={2}
+                      className={`w-full px-4 py-3 rounded-xl text-sm transition-all resize-none ${
+                        darkMode
+                          ? 'bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-white/30'
+                          : 'bg-gray-50 border border-gray-200 text-gray-900 placeholder-gray-400 focus:border-gray-400'
+                      } focus:outline-none`}
+                    />
+                  </div>
+
+                  <div>
+                    <label className={`text-xs font-medium mb-1.5 flex items-center gap-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      <PenLine className="w-3 h-3 text-amber-500" />
+                      WHAT COULD BE IMPROVED?
+                    </label>
+                    <textarea
+                      value={currentReflection.toImprove}
+                      onChange={(e) => setCurrentReflection(prev => ({ ...prev, toImprove: e.target.value }))}
+                      placeholder="Areas for growth..."
+                      rows={2}
+                      className={`w-full px-4 py-3 rounded-xl text-sm transition-all resize-none ${
+                        darkMode
+                          ? 'bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-white/30'
+                          : 'bg-gray-50 border border-gray-200 text-gray-900 placeholder-gray-400 focus:border-gray-400'
+                      } focus:outline-none`}
+                    />
+                  </div>
+
+                  <div>
+                    <label className={`text-xs font-medium mb-1.5 flex items-center gap-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      <Target className="w-3 h-3 text-blue-500" />
+                      INTENTIONS FOR NEXT WEEK
+                    </label>
+                    <textarea
+                      value={currentReflection.nextWeekIntentions}
+                      onChange={(e) => setCurrentReflection(prev => ({ ...prev, nextWeekIntentions: e.target.value }))}
+                      placeholder="What do you want to focus on?"
+                      rows={2}
+                      className={`w-full px-4 py-3 rounded-xl text-sm transition-all resize-none ${
+                        darkMode
+                          ? 'bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-white/30'
+                          : 'bg-gray-50 border border-gray-200 text-gray-900 placeholder-gray-400 focus:border-gray-400'
+                      } focus:outline-none`}
+                    />
+                  </div>
+                </div>
+
+                {/* Past Reflections */}
+                {Object.keys(weeklyReflections).length > 0 && (
+                  <div className="mb-4">
+                    <p className={`text-xs font-medium mb-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      PAST REFLECTIONS
+                    </p>
+                    <div className="space-y-2 max-h-32 overflow-y-auto">
+                      {Object.entries(weeklyReflections)
+                        .sort((a, b) => b[0].localeCompare(a[0]))
+                        .slice(0, 4)
+                        .map(([week, reflection]) => (
+                          <div
+                            key={week}
+                            className={`p-3 rounded-xl text-sm ${darkMode ? 'bg-white/5' : 'bg-gray-50'}`}
+                          >
+                            <p className={`font-medium ${darkMode ? 'text-white/70' : 'text-gray-700'}`}>{week}</p>
+                            {reflection.wentWell && (
+                              <p className={`text-xs mt-1 ${darkMode ? 'text-white/40' : 'text-gray-500'}`}>
+                                ✓ {reflection.wentWell.substring(0, 50)}...
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      saveWeeklyReflection();
+                      setShowWeeklyReview(false);
+                    }}
+                    className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium text-white transition-all"
+                    style={{ background: `linear-gradient(to right, ${theme.primary}, ${theme.accent})` }}
+                  >
+                    Save Reflection
+                  </button>
+                  <button
+                    onClick={() => setShowWeeklyReview(false)}
+                    className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                      darkMode
+                        ? 'bg-white/10 hover:bg-white/20 text-white/70'
+                        : 'bg-gray-200 hover:bg-gray-300 text-gray-600'
+                    }`}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </GlassCard>
+          </div>
+        )}
+
+        {/* ===================================== */}
+        {/* TIME BUDGET SETTINGS MODAL */}
+        {/* ===================================== */}
+        {showBudgetSettings && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+            <GlassCard darkMode={darkMode} className="w-full max-w-lg animate-scale-in max-h-[90vh] overflow-y-auto">
+              <div className="p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className={`font-bold flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                    <Gauge className="w-5 h-5" style={{ color: theme.primary }} />
+                    Time Budgets
+                  </h3>
+                  <button
+                    onClick={() => setShowBudgetSettings(false)}
+                    className={`p-1.5 rounded-lg transition-all ${darkMode ? 'hover:bg-white/10' : 'hover:bg-gray-100'}`}
+                  >
+                    <X className={`w-4 h-4 ${darkMode ? 'text-white/50' : 'text-gray-400'}`} />
+                  </button>
+                </div>
+
+                <p className={`text-sm mb-4 ${darkMode ? 'text-white/60' : 'text-gray-600'}`}>
+                  Set weekly time limits for each category to maintain balance.
+                </p>
+
+                {/* Budget List */}
+                <div className="space-y-3 mb-4">
+                  {Object.keys(categories).map(category => {
+                    const catInfo = categories[category];
+                    const budget = categoryBudgets[category] || 0;
+                    const spent = categoryTimeSpent[category] || 0;
+                    const percentage = budget > 0 ? Math.min(100, Math.round((spent / budget) * 100)) : 0;
+                    const isOver = spent > budget && budget > 0;
+
+                    return (
+                      <div key={category} className={`p-4 rounded-xl ${darkMode ? 'bg-white/5' : 'bg-gray-50'}`}>
+                        <div className="flex items-center gap-3 mb-2">
+                          <div
+                            className="w-8 h-8 rounded-lg flex items-center justify-center"
+                            style={{ backgroundColor: `${catInfo.accent}20` }}
+                          >
+                            <catInfo.icon className="w-4 h-4" style={{ color: catInfo.accent }} />
+                          </div>
+                          <span className={`flex-1 font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                            {category}
+                          </span>
+                          <span className={`text-sm ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                            {formatDuration(spent)} used
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="range"
+                            min="0"
+                            max="2400"
+                            step="30"
+                            value={budget}
+                            onChange={(e) => setCategoryBudget(category, parseInt(e.target.value))}
+                            className="flex-1 h-2 rounded-full appearance-none cursor-pointer"
+                            style={{
+                              background: `linear-gradient(to right, ${catInfo.accent} ${(budget / 2400) * 100}%, ${darkMode ? 'rgba(255,255,255,0.1)' : '#e5e7eb'} ${(budget / 2400) * 100}%)`
+                            }}
+                          />
+                          <span className={`text-sm font-medium w-16 text-right ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                            {budget > 0 ? formatDuration(budget) : 'No limit'}
+                          </span>
+                        </div>
+
+                        {budget > 0 && (
+                          <div className="mt-2">
+                            <div className={`h-1.5 rounded-full overflow-hidden ${darkMode ? 'bg-white/10' : 'bg-gray-200'}`}>
+                              <div
+                                className={`h-full rounded-full transition-all duration-500 ${isOver ? 'bg-red-500' : ''}`}
+                                style={{
+                                  width: `${Math.min(100, percentage)}%`,
+                                  backgroundColor: isOver ? undefined : catInfo.accent
+                                }}
+                              />
+                            </div>
+                            <p className={`text-xs mt-1 ${isOver ? 'text-red-500' : darkMode ? 'text-white/40' : 'text-gray-400'}`}>
+                              {isOver ? `Over by ${formatDuration(spent - budget)}` : `${percentage}% used, ${formatDuration(budget - spent)} remaining`}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <button
+                  onClick={() => setShowBudgetSettings(false)}
+                  className={`w-full px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    darkMode
+                      ? 'bg-white/10 hover:bg-white/20 text-white/70'
+                      : 'bg-gray-200 hover:bg-gray-300 text-gray-600'
+                  }`}
+                >
+                  Done
+                </button>
+              </div>
+            </GlassCard>
+          </div>
+        )}
+
+        {/* ===================================== */}
+        {/* TEMPLATE LIBRARY MODAL */}
+        {/* ===================================== */}
+        {showTemplateLibrary && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+            <GlassCard darkMode={darkMode} className="w-full max-w-lg animate-scale-in max-h-[90vh] overflow-y-auto">
+              <div className="p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className={`font-bold flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                    <Library className="w-5 h-5" style={{ color: theme.primary }} />
+                    Activity Templates
+                  </h3>
+                  <button
+                    onClick={() => setShowTemplateLibrary(false)}
+                    className={`p-1.5 rounded-lg transition-all ${darkMode ? 'hover:bg-white/10' : 'hover:bg-gray-100'}`}
+                  >
+                    <X className={`w-4 h-4 ${darkMode ? 'text-white/50' : 'text-gray-400'}`} />
+                  </button>
+                </div>
+
+                <p className={`text-sm mb-4 ${darkMode ? 'text-white/60' : 'text-gray-600'}`}>
+                  Save and reuse your favorite activity configurations.
+                </p>
+
+                {/* Default Templates */}
+                <div className="mb-4">
+                  <p className={`text-xs font-medium mb-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                    QUICK ADD
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {activityTemplates.slice(0, 6).map((template, i) => (
+                      <button
+                        key={i}
+                        onClick={() => {
+                          addFromTemplate(template);
+                          setShowTemplateLibrary(false);
+                        }}
+                        className={`flex items-center gap-2 p-3 rounded-xl text-left transition-all ${
+                          darkMode
+                            ? 'bg-white/5 hover:bg-white/10'
+                            : 'bg-gray-50 hover:bg-gray-100'
+                        }`}
+                      >
+                        <span className="text-xl">{template.emoji}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-sm font-medium truncate ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                            {template.name}
+                          </p>
+                          <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                            {template.duration}min
+                          </p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Custom Templates */}
+                <div className="mb-4">
+                  <p className={`text-xs font-medium mb-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                    MY TEMPLATES ({customTemplates.length})
+                  </p>
+                  {customTemplates.length === 0 ? (
+                    <div className={`text-center py-6 ${darkMode ? 'text-white/40' : 'text-gray-400'}`}>
+                      <BookMarked className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                      <p className="text-sm">No custom templates yet</p>
+                      <p className="text-xs mt-1">Save activities as templates from the schedule</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {customTemplates.map(template => (
+                        <div
+                          key={template.id}
+                          className={`flex items-center gap-3 p-3 rounded-xl ${
+                            darkMode ? 'bg-white/5' : 'bg-gray-50'
+                          }`}
+                        >
+                          <span className="text-xl">{template.emoji}</span>
+                          <div className="flex-1 min-w-0">
+                            <p className={`text-sm font-medium truncate ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                              {template.name}
+                            </p>
+                            <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                              {template.category} • {template.duration}min
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => {
+                              addFromTemplate(template);
+                              setShowTemplateLibrary(false);
+                            }}
+                            className={`p-2 rounded-lg transition-all ${
+                              darkMode ? 'hover:bg-white/10' : 'hover:bg-gray-200'
+                            }`}
+                            title="Add to schedule"
+                          >
+                            <Plus className={`w-4 h-4 ${darkMode ? 'text-white/60' : 'text-gray-600'}`} />
+                          </button>
+                          <button
+                            onClick={() => deleteTemplate(template.id)}
+                            className={`p-2 rounded-lg transition-all hover:bg-red-500/20`}
+                            title="Delete template"
+                          >
+                            <Trash2 className="w-4 h-4 text-red-500" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  onClick={() => setShowTemplateLibrary(false)}
+                  className={`w-full px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    darkMode
+                      ? 'bg-white/10 hover:bg-white/20 text-white/70'
+                      : 'bg-gray-200 hover:bg-gray-300 text-gray-600'
+                  }`}
+                >
+                  Close
+                </button>
+              </div>
+            </GlassCard>
+          </div>
+        )}
+
+        {/* ===================================== */}
+        {/* SAVE AS TEMPLATE MODAL */}
+        {/* ===================================== */}
+        {showSaveTemplate && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+            <GlassCard darkMode={darkMode} className="w-full max-w-sm animate-scale-in">
+              <div className="p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className={`font-bold flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                    <FolderPlus className="w-5 h-5" style={{ color: theme.primary }} />
+                    Save as Template
+                  </h3>
+                  <button
+                    onClick={() => {
+                      setShowSaveTemplate(null);
+                      setNewTemplateName('');
+                    }}
+                    className={`p-1.5 rounded-lg transition-all ${darkMode ? 'hover:bg-white/10' : 'hover:bg-gray-100'}`}
+                  >
+                    <X className={`w-4 h-4 ${darkMode ? 'text-white/50' : 'text-gray-400'}`} />
+                  </button>
+                </div>
+
+                <div className={`p-3 rounded-xl mb-4 ${darkMode ? 'bg-white/5' : 'bg-gray-50'}`}>
+                  <div className="flex items-center gap-3">
+                    <span className="text-2xl">{showSaveTemplate.emoji}</span>
+                    <div>
+                      <p className={`font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                        {showSaveTemplate.activity}
+                      </p>
+                      <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                        {showSaveTemplate.category} • {showSaveTemplate.duration}min
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mb-4">
+                  <label className={`text-xs font-medium mb-1.5 block ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                    TEMPLATE NAME
+                  </label>
+                  <input
+                    type="text"
+                    value={newTemplateName}
+                    onChange={(e) => setNewTemplateName(e.target.value)}
+                    placeholder={showSaveTemplate.activity}
+                    className={`w-full px-4 py-3 rounded-xl text-sm transition-all ${
+                      darkMode
+                        ? 'bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-white/30'
+                        : 'bg-gray-50 border border-gray-200 text-gray-900 placeholder-gray-400 focus:border-gray-400'
+                    } focus:outline-none`}
+                  />
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      saveAsTemplate(showSaveTemplate, newTemplateName || showSaveTemplate.activity);
+                    }}
+                    className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium text-white transition-all"
+                    style={{ background: `linear-gradient(to right, ${theme.primary}, ${theme.accent})` }}
+                  >
+                    Save Template
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowSaveTemplate(null);
+                      setNewTemplateName('');
+                    }}
+                    className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                      darkMode
+                        ? 'bg-white/10 hover:bg-white/20 text-white/70'
+                        : 'bg-gray-200 hover:bg-gray-300 text-gray-600'
+                    }`}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </GlassCard>
+          </div>
+        )}
+
+        {/* Budget Warning Toast */}
+        {budgetWarnings.length > 0 && view === 'schedule' && (
+          <div className={`fixed bottom-24 right-4 z-40 animate-slide-up`}>
+            <GlassCard darkMode={darkMode} className="max-w-xs">
+              <div className="p-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <Gauge className={`w-4 h-4 ${budgetWarnings[0].isOver ? 'text-red-500' : 'text-amber-500'}`} />
+                  <span className={`text-xs font-medium ${darkMode ? 'text-white/70' : 'text-gray-700'}`}>
+                    Budget {budgetWarnings[0].isOver ? 'Exceeded' : 'Warning'}
+                  </span>
+                </div>
+                {budgetWarnings.slice(0, 2).map(warning => (
+                  <div key={warning.category} className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                    <span className="font-medium">{warning.category}:</span> {warning.percentage}%
+                    {warning.isOver && <span className="text-red-500 ml-1">(over!)</span>}
+                  </div>
+                ))}
+                <button
+                  onClick={() => setShowBudgetSettings(true)}
+                  className="text-xs mt-2 underline"
+                  style={{ color: theme.primary }}
+                >
+                  Manage budgets
+                </button>
+              </div>
+            </GlassCard>
+          </div>
+        )}
+
+        {/* ===================================== */}
         {/* SETTINGS VIEW */}
         {/* ===================================== */}
         {view === 'settings' && (
@@ -4467,6 +5161,52 @@ export default function JustinSchedule() {
                   <Printer className="w-5 h-5" />
                 </button>
 
+                {/* Weekly Review Button */}
+                <button
+                  onClick={() => setShowWeeklyReview(true)}
+                  className={`p-2.5 rounded-xl transition-all ${
+                    darkMode
+                      ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                  }`}
+                  title="Weekly review & reflection"
+                >
+                  <BookOpen className="w-5 h-5" />
+                </button>
+
+                {/* Time Budget Button */}
+                <button
+                  onClick={() => setShowBudgetSettings(true)}
+                  className={`p-2.5 rounded-xl transition-all relative ${
+                    budgetWarnings.length > 0
+                      ? 'bg-amber-500/20 text-amber-500'
+                      : darkMode
+                        ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                        : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                  }`}
+                  title="Time budgets"
+                >
+                  <Gauge className="w-5 h-5" />
+                  {budgetWarnings.length > 0 && (
+                    <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-amber-500 text-white text-xs flex items-center justify-center font-bold">
+                      !
+                    </span>
+                  )}
+                </button>
+
+                {/* Template Library Button */}
+                <button
+                  onClick={() => setShowTemplateLibrary(true)}
+                  className={`p-2.5 rounded-xl transition-all ${
+                    darkMode
+                      ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                  }`}
+                  title="Activity templates"
+                >
+                  <Library className="w-5 h-5" />
+                </button>
+
                 {/* Conflict Warning Indicator */}
                 {scheduleConflicts.length > 0 && (
                   <button
@@ -4940,7 +5680,19 @@ export default function JustinSchedule() {
                             />
                           </div>
 
-                          <div className="flex gap-2 justify-end">
+                          <div className="flex gap-2 justify-end flex-wrap">
+                            <button
+                              onClick={() => setShowSaveTemplate(item)}
+                              className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-all ${
+                                darkMode
+                                  ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                                  : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                              }`}
+                              title="Save as reusable template"
+                            >
+                              <FolderPlus className="w-4 h-4" />
+                              Template
+                            </button>
                             <button
                               onClick={() => deleteItem(item.id)}
                               className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-all ${
