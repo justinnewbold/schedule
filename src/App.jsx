@@ -10,7 +10,8 @@ import {
   Filter, AlertCircle, Undo2, Redo2, CopyPlus, Upload, FileJson,
   History, Archive, Play, Pause, Square, SkipForward, MessageSquare,
   Keyboard, Volume2, VolumeX, Repeat, LayoutGrid, LineChart,
-  Flame, CalendarDays, Eye, EyeOff
+  Flame, CalendarDays, Eye, EyeOff, Printer, FileText, AlertTriangle,
+  Wand2, Clock3, LayoutList
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
@@ -529,6 +530,22 @@ export default function JustinSchedule() {
     return saved ? JSON.parse(saved) : [];
   });
   const [showInsightsModal, setShowInsightsModal] = useState(false);
+
+  // Print view state
+  const [showPrintView, setShowPrintView] = useState(false);
+
+  // Conflict detection state
+  const [showConflicts, setShowConflicts] = useState(true);
+
+  // Auto-scheduler state
+  const [showAutoScheduler, setShowAutoScheduler] = useState(false);
+  const [autoSchedulerRequest, setAutoSchedulerRequest] = useState({
+    activityName: '',
+    duration: 30,
+    category: 'Personal',
+    preferredDays: [],
+    preferredTimeRange: 'any' // 'morning', 'afternoon', 'evening', 'any'
+  });
 
   // Activity Templates for Quick Add
   const activityTemplates = [
@@ -1228,6 +1245,187 @@ export default function JustinSchedule() {
       totalTracked: recentHistory.length
     };
   }, [activityHistory]);
+
+  // Conflict Detection - find overlapping activities
+  const scheduleConflicts = useMemo(() => {
+    const conflicts = [];
+
+    days.forEach(day => {
+      const daySchedule = schedule[day] || [];
+      for (let i = 0; i < daySchedule.length; i++) {
+        for (let j = i + 1; j < daySchedule.length; j++) {
+          const a = daySchedule[i];
+          const b = daySchedule[j];
+
+          const aStart = parseTimeToMinutes(a.time);
+          const aEnd = aStart + a.duration;
+          const bStart = parseTimeToMinutes(b.time);
+          const bEnd = bStart + b.duration;
+
+          // Check for overlap
+          if (aStart < bEnd && bStart < aEnd) {
+            conflicts.push({
+              day,
+              activity1: a,
+              activity2: b,
+              overlapMinutes: Math.min(aEnd, bEnd) - Math.max(aStart, bStart)
+            });
+          }
+        }
+      }
+    });
+
+    return conflicts;
+  }, [schedule]);
+
+  // Find available time slots for auto-scheduler
+  const findAvailableSlots = useCallback((duration, preferredDays, preferredTimeRange) => {
+    const slots = [];
+    const daysToCheck = preferredDays.length > 0 ? preferredDays : days;
+
+    // Define time ranges
+    const timeRanges = {
+      morning: { start: 6 * 60, end: 12 * 60 },    // 6 AM - 12 PM
+      afternoon: { start: 12 * 60, end: 17 * 60 }, // 12 PM - 5 PM
+      evening: { start: 17 * 60, end: 22 * 60 },   // 5 PM - 10 PM
+      any: { start: 6 * 60, end: 22 * 60 }         // 6 AM - 10 PM
+    };
+
+    const range = timeRanges[preferredTimeRange] || timeRanges.any;
+
+    daysToCheck.forEach(day => {
+      const daySchedule = (schedule[day] || []).slice().sort((a, b) =>
+        parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time)
+      );
+
+      // Check gaps between activities
+      let currentTime = range.start;
+
+      for (const activity of daySchedule) {
+        const actStart = parseTimeToMinutes(activity.time);
+        const actEnd = actStart + activity.duration;
+
+        // Check if there's a gap before this activity
+        if (actStart > currentTime && actStart >= range.start && currentTime < range.end) {
+          const gapStart = Math.max(currentTime, range.start);
+          const gapEnd = Math.min(actStart, range.end);
+          const gapDuration = gapEnd - gapStart;
+
+          if (gapDuration >= duration) {
+            slots.push({
+              day,
+              startMinutes: gapStart,
+              endMinutes: gapStart + duration,
+              time: formatMinutesToTime(gapStart),
+              score: calculateSlotScore(day, gapStart, preferredTimeRange)
+            });
+          }
+        }
+
+        currentTime = Math.max(currentTime, actEnd);
+      }
+
+      // Check gap after last activity
+      if (currentTime < range.end) {
+        const gapDuration = range.end - currentTime;
+        if (gapDuration >= duration) {
+          slots.push({
+            day,
+            startMinutes: currentTime,
+            endMinutes: currentTime + duration,
+            time: formatMinutesToTime(currentTime),
+            score: calculateSlotScore(day, currentTime, preferredTimeRange)
+          });
+        }
+      }
+    });
+
+    // Sort by score (best slots first)
+    return slots.sort((a, b) => b.score - a.score).slice(0, 10);
+  }, [schedule]);
+
+  // Calculate slot score for ranking suggestions
+  const calculateSlotScore = (day, startMinutes, preferredTimeRange) => {
+    let score = 100;
+
+    // Prefer weekdays for work-related, weekends for personal
+    const isWeekend = day === 'Saturday' || day === 'Sunday';
+
+    // Time preference bonus
+    const hour = Math.floor(startMinutes / 60);
+    if (preferredTimeRange === 'morning' && hour >= 6 && hour < 10) score += 20;
+    if (preferredTimeRange === 'afternoon' && hour >= 12 && hour < 15) score += 20;
+    if (preferredTimeRange === 'evening' && hour >= 17 && hour < 20) score += 20;
+
+    // Avoid very early or very late
+    if (hour < 7) score -= 30;
+    if (hour > 20) score -= 20;
+
+    // Balanced distribution - prefer days with fewer activities
+    const daySchedule = schedule[day] || [];
+    score -= daySchedule.length * 5;
+
+    return score;
+  };
+
+  // Format minutes to time string
+  const formatMinutesToTime = (minutes) => {
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    const period = hours >= 12 ? 'PM' : 'AM';
+    const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+    return `${displayHours}:${mins.toString().padStart(2, '0')} ${period}`;
+  };
+
+  // Add activity from auto-scheduler suggestion
+  const addFromSuggestion = useCallback((slot, activityName, duration, category) => {
+    pushToUndoStack(schedule);
+
+    const newActivity = {
+      id: generateId(),
+      time: slot.time,
+      activity: activityName,
+      duration: duration,
+      category: category,
+      emoji: getCategoryEmoji(category)
+    };
+
+    const daySchedule = schedule[slot.day] || [];
+    const newSchedule = {
+      ...schedule,
+      [slot.day]: [...daySchedule, newActivity].sort((a, b) =>
+        parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time)
+      )
+    };
+
+    setSchedule(newSchedule);
+    setHasChanges(true);
+    setShowAutoScheduler(false);
+    setAutoSchedulerRequest({
+      activityName: '',
+      duration: 30,
+      category: 'Personal',
+      preferredDays: [],
+      preferredTimeRange: 'any'
+    });
+  }, [schedule, pushToUndoStack]);
+
+  // Get emoji for category
+  const getCategoryEmoji = (category) => {
+    const emojiMap = {
+      'Work': '💼',
+      'Personal': '🌟',
+      'Exercise': '🏃',
+      'Meals': '🍽️',
+      'Family': '👨‍👩‍👧‍👦',
+      'Development': '💻',
+      'Music': '🎵',
+      'Health': '❤️',
+      'Learning': '📚',
+      'Social': '👥'
+    };
+    return emojiMap[category] || '📌';
+  };
 
   // Log today's activities for statistics (run once per day)
   useEffect(() => {
@@ -2952,6 +3150,386 @@ export default function JustinSchedule() {
         )}
 
         {/* ===================================== */}
+        {/* PRINT VIEW MODAL */}
+        {/* ===================================== */}
+        {showPrintView && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+            <div className="bg-white w-full max-w-4xl max-h-[90vh] overflow-auto rounded-2xl shadow-2xl animate-scale-in">
+              {/* Print Header */}
+              <div className="sticky top-0 bg-white border-b border-gray-200 p-4 flex items-center justify-between no-print">
+                <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                  <Printer className="w-5 h-5 text-blue-500" />
+                  Print Preview
+                </h3>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => window.print()}
+                    className="px-4 py-2 rounded-xl bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-all flex items-center gap-2"
+                  >
+                    <Printer className="w-4 h-4" />
+                    Print
+                  </button>
+                  <button
+                    onClick={() => setShowPrintView(false)}
+                    className="p-2 rounded-lg hover:bg-gray-100 transition-all"
+                  >
+                    <X className="w-5 h-5 text-gray-500" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Printable Content */}
+              <div className="p-8 print-content" id="print-schedule">
+                <div className="text-center mb-6">
+                  <h1 className="text-2xl font-bold text-gray-900">Weekly Schedule</h1>
+                  <p className="text-gray-500 text-sm mt-1">
+                    Week of {new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                  </p>
+                </div>
+
+                {/* Schedule Grid */}
+                <div className="grid grid-cols-7 gap-2">
+                  {days.map(day => {
+                    const daySchedule = schedule[day] || [];
+                    const isToday = day === days[new Date().getDay() === 0 ? 6 : new Date().getDay() - 1];
+                    return (
+                      <div key={day} className={`border rounded-lg overflow-hidden ${isToday ? 'border-blue-400 border-2' : 'border-gray-200'}`}>
+                        <div className={`p-2 text-center font-bold text-sm ${isToday ? 'bg-blue-50 text-blue-700' : 'bg-gray-50 text-gray-700'}`}>
+                          {day.slice(0, 3)}
+                        </div>
+                        <div className="p-2 min-h-[200px]">
+                          {daySchedule.length === 0 ? (
+                            <p className="text-xs text-gray-400 text-center italic">No activities</p>
+                          ) : (
+                            <div className="space-y-1">
+                              {daySchedule.map((item, idx) => (
+                                <div key={idx} className="text-xs p-1.5 rounded bg-gray-50 border-l-2" style={{ borderLeftColor: categories[item.category]?.accent || '#888' }}>
+                                  <div className="font-medium text-gray-800 truncate">
+                                    {item.emoji} {item.activity.substring(0, 20)}{item.activity.length > 20 ? '...' : ''}
+                                  </div>
+                                  <div className="text-gray-500">
+                                    {item.time} • {item.duration}min
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Statistics Summary */}
+                <div className="mt-6 pt-4 border-t border-gray-200">
+                  <h4 className="font-bold text-gray-700 mb-3">Weekly Summary</h4>
+                  <div className="grid grid-cols-4 gap-4 text-sm">
+                    <div className="bg-gray-50 p-3 rounded-lg">
+                      <p className="text-gray-500 text-xs">Total Activities</p>
+                      <p className="font-bold text-gray-900">{stats.totalActivities}</p>
+                    </div>
+                    <div className="bg-gray-50 p-3 rounded-lg">
+                      <p className="text-gray-500 text-xs">Total Time</p>
+                      <p className="font-bold text-gray-900">{formatDuration(stats.totalTime)}</p>
+                    </div>
+                    <div className="bg-gray-50 p-3 rounded-lg">
+                      <p className="text-gray-500 text-xs">Categories Used</p>
+                      <p className="font-bold text-gray-900">{Object.keys(stats.categoryBreakdown).length}</p>
+                    </div>
+                    <div className="bg-gray-50 p-3 rounded-lg">
+                      <p className="text-gray-500 text-xs">Avg Per Day</p>
+                      <p className="font-bold text-gray-900">{formatDuration(Math.round(stats.totalTime / 7))}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Footer */}
+                <div className="mt-6 pt-4 border-t border-gray-200 text-center text-xs text-gray-400">
+                  Generated from Schedule App • {new Date().toLocaleString()}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ===================================== */}
+        {/* CONFLICT WARNINGS MODAL */}
+        {/* ===================================== */}
+        {scheduleConflicts.length > 0 && showConflicts && view === 'schedule' && (
+          <div className={`fixed bottom-24 left-4 right-4 z-40 max-w-md mx-auto animate-slide-up`}>
+            <GlassCard darkMode={darkMode} glow className="border-2 border-amber-500/50">
+              <div className="p-4">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0">
+                    <AlertTriangle className="w-5 h-5 text-amber-500" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <h4 className={`font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                        Schedule Conflicts ({scheduleConflicts.length})
+                      </h4>
+                      <button
+                        onClick={() => setShowConflicts(false)}
+                        className={`p-1 rounded-lg transition-all ${darkMode ? 'hover:bg-white/10' : 'hover:bg-gray-100'}`}
+                      >
+                        <X className={`w-4 h-4 ${darkMode ? 'text-white/50' : 'text-gray-400'}`} />
+                      </button>
+                    </div>
+                    <p className={`text-sm mt-1 ${darkMode ? 'text-white/60' : 'text-gray-600'}`}>
+                      Overlapping activities detected:
+                    </p>
+                    <div className="mt-2 space-y-2 max-h-32 overflow-y-auto">
+                      {scheduleConflicts.slice(0, 3).map((conflict, i) => (
+                        <div
+                          key={i}
+                          className={`text-xs p-2 rounded-lg cursor-pointer transition-all ${
+                            darkMode ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-50 hover:bg-gray-100'
+                          }`}
+                          onClick={() => setSelectedDay(conflict.day)}
+                        >
+                          <span className="font-medium" style={{ color: theme.primary }}>{conflict.day}:</span>
+                          <span className={darkMode ? 'text-white/70' : 'text-gray-600'}>
+                            {' '}{conflict.activity1.activity.substring(0, 15)}... & {conflict.activity2.activity.substring(0, 15)}...
+                          </span>
+                          <span className="text-amber-500 ml-1">({conflict.overlapMinutes}min overlap)</span>
+                        </div>
+                      ))}
+                      {scheduleConflicts.length > 3 && (
+                        <p className={`text-xs ${darkMode ? 'text-white/40' : 'text-gray-400'}`}>
+                          +{scheduleConflicts.length - 3} more conflicts
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </GlassCard>
+          </div>
+        )}
+
+        {/* ===================================== */}
+        {/* AUTO-SCHEDULER MODAL */}
+        {/* ===================================== */}
+        {showAutoScheduler && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+            <GlassCard darkMode={darkMode} className="w-full max-w-lg animate-scale-in max-h-[90vh] overflow-y-auto">
+              <div className="p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className={`font-bold flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                    <Wand2 className="w-5 h-5" style={{ color: theme.primary }} />
+                    Smart Scheduler
+                  </h3>
+                  <button
+                    onClick={() => setShowAutoScheduler(false)}
+                    className={`p-1.5 rounded-lg transition-all ${darkMode ? 'hover:bg-white/10' : 'hover:bg-gray-100'}`}
+                  >
+                    <X className={`w-4 h-4 ${darkMode ? 'text-white/50' : 'text-gray-400'}`} />
+                  </button>
+                </div>
+
+                <p className={`text-sm mb-4 ${darkMode ? 'text-white/60' : 'text-gray-600'}`}>
+                  Tell me what you want to schedule and I'll find the best time slots.
+                </p>
+
+                {/* Activity Name */}
+                <div className="mb-4">
+                  <label className={`text-xs font-medium mb-1.5 block ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                    ACTIVITY NAME
+                  </label>
+                  <input
+                    type="text"
+                    value={autoSchedulerRequest.activityName}
+                    onChange={(e) => setAutoSchedulerRequest(prev => ({ ...prev, activityName: e.target.value }))}
+                    placeholder="e.g., Morning workout, Team meeting..."
+                    className={`w-full px-4 py-3 rounded-xl text-sm transition-all ${
+                      darkMode
+                        ? 'bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-white/30'
+                        : 'bg-gray-50 border border-gray-200 text-gray-900 placeholder-gray-400 focus:border-gray-400'
+                    } focus:outline-none`}
+                  />
+                </div>
+
+                {/* Duration & Category */}
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  <div>
+                    <label className={`text-xs font-medium mb-1.5 block ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      DURATION
+                    </label>
+                    <select
+                      value={autoSchedulerRequest.duration}
+                      onChange={(e) => setAutoSchedulerRequest(prev => ({ ...prev, duration: parseInt(e.target.value) }))}
+                      className={`w-full px-4 py-3 rounded-xl text-sm transition-all ${
+                        darkMode
+                          ? 'bg-white/5 border border-white/10 text-white'
+                          : 'bg-gray-50 border border-gray-200 text-gray-900'
+                      } focus:outline-none`}
+                    >
+                      <option value={15}>15 min</option>
+                      <option value={30}>30 min</option>
+                      <option value={45}>45 min</option>
+                      <option value={60}>1 hour</option>
+                      <option value={90}>1.5 hours</option>
+                      <option value={120}>2 hours</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className={`text-xs font-medium mb-1.5 block ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      CATEGORY
+                    </label>
+                    <select
+                      value={autoSchedulerRequest.category}
+                      onChange={(e) => setAutoSchedulerRequest(prev => ({ ...prev, category: e.target.value }))}
+                      className={`w-full px-4 py-3 rounded-xl text-sm transition-all ${
+                        darkMode
+                          ? 'bg-white/5 border border-white/10 text-white'
+                          : 'bg-gray-50 border border-gray-200 text-gray-900'
+                      } focus:outline-none`}
+                    >
+                      {Object.keys(categories).map(cat => (
+                        <option key={cat} value={cat}>{cat}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Preferred Time */}
+                <div className="mb-4">
+                  <label className={`text-xs font-medium mb-1.5 block ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                    PREFERRED TIME
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      { value: 'any', label: 'Any Time', icon: Clock3 },
+                      { value: 'morning', label: 'Morning', icon: Sun },
+                      { value: 'afternoon', label: 'Afternoon', icon: Clock },
+                      { value: 'evening', label: 'Evening', icon: Moon },
+                    ].map(({ value, label, icon: Icon }) => (
+                      <button
+                        key={value}
+                        onClick={() => setAutoSchedulerRequest(prev => ({ ...prev, preferredTimeRange: value }))}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium transition-all ${
+                          autoSchedulerRequest.preferredTimeRange === value
+                            ? 'text-white shadow-md'
+                            : darkMode
+                              ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                              : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                        }`}
+                        style={autoSchedulerRequest.preferredTimeRange === value ? { background: theme.primary } : {}}
+                      >
+                        <Icon className="w-4 h-4" />
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Preferred Days */}
+                <div className="mb-4">
+                  <label className={`text-xs font-medium mb-1.5 block ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                    PREFERRED DAYS (leave empty for any)
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {days.map(day => {
+                      const isSelected = autoSchedulerRequest.preferredDays.includes(day);
+                      return (
+                        <button
+                          key={day}
+                          onClick={() => {
+                            setAutoSchedulerRequest(prev => ({
+                              ...prev,
+                              preferredDays: isSelected
+                                ? prev.preferredDays.filter(d => d !== day)
+                                : [...prev.preferredDays, day]
+                            }));
+                          }}
+                          className={`px-3 py-2 rounded-xl text-sm font-medium transition-all ${
+                            isSelected
+                              ? 'text-white shadow-md'
+                              : darkMode
+                                ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                                : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                          }`}
+                          style={isSelected ? { background: theme.primary } : {}}
+                        >
+                          {day.slice(0, 3)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Suggestions */}
+                {autoSchedulerRequest.activityName && (
+                  <div className="mb-4">
+                    <label className={`text-xs font-medium mb-2 block ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      SUGGESTED TIME SLOTS
+                    </label>
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {findAvailableSlots(
+                        autoSchedulerRequest.duration,
+                        autoSchedulerRequest.preferredDays,
+                        autoSchedulerRequest.preferredTimeRange
+                      ).slice(0, 6).map((slot, i) => (
+                        <button
+                          key={i}
+                          onClick={() => addFromSuggestion(
+                            slot,
+                            autoSchedulerRequest.activityName,
+                            autoSchedulerRequest.duration,
+                            autoSchedulerRequest.category
+                          )}
+                          className={`w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all ${
+                            darkMode
+                              ? 'bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20'
+                              : 'bg-gray-50 hover:bg-gray-100 border border-gray-200 hover:border-gray-300'
+                          }`}
+                        >
+                          <div
+                            className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+                            style={{ backgroundColor: `${theme.primary}20` }}
+                          >
+                            <Clock3 className="w-5 h-5" style={{ color: theme.primary }} />
+                          </div>
+                          <div className="flex-1">
+                            <p className={`font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                              {slot.day} at {slot.time}
+                            </p>
+                            <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                              {autoSchedulerRequest.duration} min • Score: {slot.score}
+                            </p>
+                          </div>
+                          <Plus className={`w-5 h-5 ${darkMode ? 'text-white/40' : 'text-gray-400'}`} />
+                        </button>
+                      ))}
+                      {findAvailableSlots(
+                        autoSchedulerRequest.duration,
+                        autoSchedulerRequest.preferredDays,
+                        autoSchedulerRequest.preferredTimeRange
+                      ).length === 0 && (
+                        <p className={`text-center py-4 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                          No available slots found. Try adjusting your preferences.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  onClick={() => setShowAutoScheduler(false)}
+                  className={`w-full px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    darkMode
+                      ? 'bg-white/10 hover:bg-white/20 text-white/70'
+                      : 'bg-gray-200 hover:bg-gray-300 text-gray-600'
+                  }`}
+                >
+                  Close
+                </button>
+              </div>
+            </GlassCard>
+          </div>
+        )}
+
+        {/* ===================================== */}
         {/* SETTINGS VIEW */}
         {/* ===================================== */}
         {view === 'settings' && (
@@ -3862,6 +4440,46 @@ export default function JustinSchedule() {
                 >
                   <LineChart className="w-5 h-5" />
                 </button>
+
+                {/* Smart Scheduler Button */}
+                <button
+                  onClick={() => setShowAutoScheduler(true)}
+                  className={`p-2.5 rounded-xl transition-all ${
+                    darkMode
+                      ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                  }`}
+                  title="Smart scheduler - find best time slots"
+                >
+                  <Wand2 className="w-5 h-5" />
+                </button>
+
+                {/* Print View Button */}
+                <button
+                  onClick={() => setShowPrintView(true)}
+                  className={`p-2.5 rounded-xl transition-all ${
+                    darkMode
+                      ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                  }`}
+                  title="Print schedule"
+                >
+                  <Printer className="w-5 h-5" />
+                </button>
+
+                {/* Conflict Warning Indicator */}
+                {scheduleConflicts.length > 0 && (
+                  <button
+                    onClick={() => setShowConflicts(true)}
+                    className="p-2.5 rounded-xl transition-all bg-amber-500/20 hover:bg-amber-500/30 text-amber-500 relative"
+                    title={`${scheduleConflicts.length} scheduling conflict(s)`}
+                  >
+                    <AlertTriangle className="w-5 h-5" />
+                    <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-amber-500 text-white text-xs flex items-center justify-center font-bold">
+                      {scheduleConflicts.length}
+                    </span>
+                  </button>
+                )}
 
                 {/* Filter Button */}
                 <button

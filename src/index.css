@@ -602,11 +602,79 @@ input:focus-visible {
 /* PRINT STYLES */
 /* ============================================ */
 @media print {
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
   body {
     background: white !important;
+    margin: 0 !important;
+    padding: 0 !important;
   }
-  
+
   .no-print {
     display: none !important;
   }
+
+  .print-content {
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 20px !important;
+    box-shadow: none !important;
+  }
+
+  /* Hide everything except print content */
+  body > *:not(.fixed) {
+    display: none !important;
+  }
+
+  .fixed {
+    position: relative !important;
+    display: block !important;
+  }
+
+  /* Make print modal full page */
+  #print-schedule {
+    display: block !important;
+    page-break-inside: avoid;
+  }
+
+  /* Clean borders for schedule grid */
+  .print-content .border {
+    border-color: #d1d5db !important;
+  }
+
+  /* Ensure text is dark for readability */
+  .print-content * {
+    color: #1f2937 !important;
+  }
+
+  .print-content .text-gray-500,
+  .print-content .text-gray-400 {
+    color: #6b7280 !important;
+  }
+
+  /* Page setup */
+  @page {
+    size: landscape;
+    margin: 0.5in;
+  }
+}
+
+/* Slide up animation for conflict warning */
+@keyframes slide-up {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.3s ease-out forwards;
 }
