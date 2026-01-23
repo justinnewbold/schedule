@@ -1,12 +1,18 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { 
-  Calendar, Clock, Moon, Sun, ChevronLeft, ChevronRight, 
+import {
+  Calendar, Clock, Moon, Sun, ChevronLeft, ChevronRight,
   GripVertical, Save, RotateCcw, Check, X, Plus, Trash2,
-  Briefcase, Coffee, Home, Heart, Utensils, Car, Dumbbell, 
+  Briefcase, Coffee, Home, Heart, Utensils, Car, Dumbbell,
   Music, Star, Sparkles, Settings, BarChart3, TrendingUp,
   Award, Zap, Cloud, CloudOff, Loader2, Palette, CalendarCheck,
   Download, ExternalLink, RefreshCw, Copy, Timer, Layers,
-  ChevronUp, ChevronDown, Minus
+  ChevronUp, ChevronDown, Minus, Bell, BellOff, Target, Search,
+  Filter, AlertCircle, Undo2, Redo2, CopyPlus, Upload, FileJson,
+  History, Archive, Play, Pause, Square, SkipForward, MessageSquare,
+  Keyboard, Volume2, VolumeX, Repeat, LayoutGrid, LineChart,
+  Flame, CalendarDays, Eye, EyeOff, Printer, FileText, AlertTriangle,
+  Wand2, Clock3, LayoutList, BookOpen, PenLine, Trophy, Gauge,
+  Library, FolderPlus, BookMarked, Percent
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
@@ -434,9 +440,9 @@ export default function JustinSchedule() {
   const [syncStatus, setSyncStatus] = useState('idle');
   const [view, setView] = useState('schedule');
   const [editingItem, setEditingItem] = useState(null);
-  const [editValues, setEditValues] = useState({ activity: '', duration: 0, time: '' });
+  const [editValues, setEditValues] = useState({ activity: '', duration: 0, time: '', notes: '' });
   const [showAddForm, setShowAddForm] = useState(false);
-  const [newItem, setNewItem] = useState({ activity: '', duration: 30, category: 'Personal' });
+  const [newItem, setNewItem] = useState({ activity: '', duration: 30, category: 'Personal', notes: '' });
   const [draggedItem, setDraggedItem] = useState(null);
   const [dragOverIndex, setDragOverIndex] = useState(null);
   const dragNode = useRef(null);
@@ -448,6 +454,127 @@ export default function JustinSchedule() {
   const [recentlyAddedId, setRecentlyAddedId] = useState(null);
   const swipeStartX = useRef(null);
   const swipeThreshold = 80;
+
+  // Notification state
+  const [notificationsEnabled, setNotificationsEnabled] = useState(() => {
+    const saved = localStorage.getItem('notificationsEnabled');
+    return saved ? JSON.parse(saved) : false;
+  });
+  const [notificationTiming, setNotificationTiming] = useState(() => {
+    const saved = localStorage.getItem('notificationTiming');
+    return saved ? parseInt(saved) : 5; // minutes before activity
+  });
+  const [notifiedActivities, setNotifiedActivities] = useState(new Set());
+  const lastNotificationCheck = useRef(null);
+
+  // Weekly Goals state
+  const [weeklyGoals, setWeeklyGoals] = useState(() => {
+    const saved = localStorage.getItem('weeklyGoals');
+    return saved ? JSON.parse(saved) : {};
+  });
+  const [showGoalEditor, setShowGoalEditor] = useState(false);
+  const [editingGoal, setEditingGoal] = useState({ category: '', hours: 0 });
+
+  // Search & Filter state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [showFilters, setShowFilters] = useState(false);
+
+  // Undo/Redo state
+  const [undoStack, setUndoStack] = useState([]);
+  const [redoStack, setRedoStack] = useState([]);
+  const maxUndoSteps = 20;
+
+  // Clone Week state
+  const [showCloneWeekModal, setShowCloneWeekModal] = useState(false);
+
+  // Backup/Restore state
+  const [showBackupModal, setShowBackupModal] = useState(false);
+  const fileInputRef = useRef(null);
+
+  // Focus Mode / Pomodoro state
+  const [focusMode, setFocusMode] = useState(false);
+  const [focusActivity, setFocusActivity] = useState(null);
+  const [focusTimeRemaining, setFocusTimeRemaining] = useState(0);
+  const [focusType, setFocusType] = useState('work'); // 'work' or 'break'
+  const [focusPaused, setFocusPaused] = useState(false);
+  const [pomodoroCount, setPomodoroCount] = useState(0);
+  const [focusSoundEnabled, setFocusSoundEnabled] = useState(true);
+  const focusIntervalRef = useRef(null);
+
+  // Pomodoro settings (in minutes)
+  const pomodoroSettings = {
+    workDuration: 25,
+    shortBreak: 5,
+    longBreak: 15,
+    longBreakInterval: 4
+  };
+
+  // Keyboard shortcuts enabled
+  const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
+
+  // Timeline view state
+  const [showTimelineView, setShowTimelineView] = useState(false);
+  const timelineStartHour = 5; // 5 AM
+  const timelineEndHour = 23; // 11 PM
+
+  // Recurring activities state
+  const [showRecurringModal, setShowRecurringModal] = useState(null);
+  const [recurringPatterns, setRecurringPatterns] = useState(() => {
+    const saved = localStorage.getItem('recurringPatterns');
+    return saved ? JSON.parse(saved) : {};
+  });
+
+  // Activity Statistics state
+  const [activityHistory, setActivityHistory] = useState(() => {
+    const saved = localStorage.getItem('activityHistory');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [showInsightsModal, setShowInsightsModal] = useState(false);
+
+  // Print view state
+  const [showPrintView, setShowPrintView] = useState(false);
+
+  // Conflict detection state
+  const [showConflicts, setShowConflicts] = useState(true);
+
+  // Auto-scheduler state
+  const [showAutoScheduler, setShowAutoScheduler] = useState(false);
+  const [autoSchedulerRequest, setAutoSchedulerRequest] = useState({
+    activityName: '',
+    duration: 30,
+    category: 'Personal',
+    preferredDays: [],
+    preferredTimeRange: 'any' // 'morning', 'afternoon', 'evening', 'any'
+  });
+
+  // Weekly Review state
+  const [showWeeklyReview, setShowWeeklyReview] = useState(false);
+  const [weeklyReflections, setWeeklyReflections] = useState(() => {
+    const saved = localStorage.getItem('weeklyReflections');
+    return saved ? JSON.parse(saved) : {};
+  });
+  const [currentReflection, setCurrentReflection] = useState({
+    wentWell: '',
+    toImprove: '',
+    nextWeekIntentions: ''
+  });
+
+  // Time Budget state
+  const [categoryBudgets, setCategoryBudgets] = useState(() => {
+    const saved = localStorage.getItem('categoryBudgets');
+    return saved ? JSON.parse(saved) : {};
+  });
+  const [showBudgetSettings, setShowBudgetSettings] = useState(false);
+
+  // Custom Templates Library state
+  const [customTemplates, setCustomTemplates] = useState(() => {
+    const saved = localStorage.getItem('customTemplates');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [showTemplateLibrary, setShowTemplateLibrary] = useState(false);
+  const [showSaveTemplate, setShowSaveTemplate] = useState(null);
+  const [newTemplateName, setNewTemplateName] = useState('');
 
   // Activity Templates for Quick Add
   const activityTemplates = [
@@ -472,6 +599,1037 @@ export default function JustinSchedule() {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // Save notification settings to localStorage
+  useEffect(() => {
+    localStorage.setItem('notificationsEnabled', JSON.stringify(notificationsEnabled));
+    localStorage.setItem('notificationTiming', notificationTiming.toString());
+  }, [notificationsEnabled, notificationTiming]);
+
+  // Save weekly goals to localStorage
+  useEffect(() => {
+    localStorage.setItem('weeklyGoals', JSON.stringify(weeklyGoals));
+  }, [weeklyGoals]);
+
+  // Undo/Redo functions
+  const pushToUndoStack = useCallback((previousSchedule) => {
+    setUndoStack(prev => {
+      const newStack = [...prev, JSON.stringify(previousSchedule)];
+      // Keep only the last maxUndoSteps
+      if (newStack.length > maxUndoSteps) {
+        return newStack.slice(-maxUndoSteps);
+      }
+      return newStack;
+    });
+    // Clear redo stack when a new action is performed
+    setRedoStack([]);
+  }, [maxUndoSteps]);
+
+  const undo = useCallback(() => {
+    if (undoStack.length === 0) return;
+
+    const newUndoStack = [...undoStack];
+    const previousState = newUndoStack.pop();
+
+    // Push current state to redo stack
+    setRedoStack(prev => [...prev, JSON.stringify(schedule)]);
+
+    // Restore previous state
+    setSchedule(JSON.parse(previousState));
+    setUndoStack(newUndoStack);
+    setHasChanges(true);
+  }, [undoStack, schedule]);
+
+  const redo = useCallback(() => {
+    if (redoStack.length === 0) return;
+
+    const newRedoStack = [...redoStack];
+    const nextState = newRedoStack.pop();
+
+    // Push current state to undo stack
+    setUndoStack(prev => [...prev, JSON.stringify(schedule)]);
+
+    // Restore next state
+    setSchedule(JSON.parse(nextState));
+    setRedoStack(newRedoStack);
+    setHasChanges(true);
+  }, [redoStack, schedule]);
+
+  // Helper to update schedule with undo support
+  const updateScheduleWithUndo = useCallback((newSchedule) => {
+    pushToUndoStack(schedule);
+    setSchedule(newSchedule);
+    setHasChanges(true);
+  }, [schedule, pushToUndoStack]);
+
+  // Clone Week functions
+  const cloneCurrentWeek = useCallback(() => {
+    // This creates a deep copy with new IDs
+    const clonedSchedule = {};
+    Object.entries(schedule).forEach(([day, activities]) => {
+      clonedSchedule[day] = activities.map(activity => ({
+        ...activity,
+        id: generateId()
+      }));
+    });
+    return clonedSchedule;
+  }, [schedule]);
+
+  const cloneDayToAll = useCallback((sourceDay) => {
+    pushToUndoStack(schedule);
+    const sourceActivities = schedule[sourceDay] || [];
+    const newSchedule = { ...schedule };
+
+    days.forEach(day => {
+      if (day !== sourceDay) {
+        newSchedule[day] = sourceActivities.map(activity => ({
+          ...activity,
+          id: generateId()
+        }));
+      }
+    });
+
+    setSchedule(newSchedule);
+    setHasChanges(true);
+    setShowCloneWeekModal(false);
+  }, [schedule, pushToUndoStack]);
+
+  const clearAllDays = useCallback(() => {
+    if (!confirm('Are you sure you want to clear ALL activities from ALL days? This can be undone.')) return;
+    pushToUndoStack(schedule);
+    const emptySchedule = {};
+    days.forEach(day => {
+      emptySchedule[day] = [];
+    });
+    setSchedule(emptySchedule);
+    setHasChanges(true);
+    setShowCloneWeekModal(false);
+  }, [schedule, pushToUndoStack]);
+
+  // Backup/Restore functions
+  const exportBackup = useCallback(() => {
+    const backup = {
+      version: '1.0',
+      exportedAt: new Date().toISOString(),
+      schedule: schedule,
+      weeklyGoals: weeklyGoals,
+      settings: {
+        theme: selectedTheme,
+        darkMode: darkMode,
+        notificationsEnabled: notificationsEnabled,
+        notificationTiming: notificationTiming
+      }
+    };
+
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `schedule-backup-${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, [schedule, weeklyGoals, selectedTheme, darkMode, notificationsEnabled, notificationTiming]);
+
+  const importBackup = useCallback((event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const backup = JSON.parse(e.target.result);
+
+        if (!backup.schedule) {
+          alert('Invalid backup file: missing schedule data');
+          return;
+        }
+
+        if (!confirm('This will replace your current schedule. Continue?')) return;
+
+        pushToUndoStack(schedule);
+
+        // Restore schedule
+        setSchedule(backup.schedule);
+
+        // Restore goals if present
+        if (backup.weeklyGoals) {
+          setWeeklyGoals(backup.weeklyGoals);
+        }
+
+        // Restore settings if present
+        if (backup.settings) {
+          if (backup.settings.theme) setSelectedTheme(backup.settings.theme);
+          if (typeof backup.settings.darkMode === 'boolean') setDarkMode(backup.settings.darkMode);
+          if (typeof backup.settings.notificationsEnabled === 'boolean') {
+            setNotificationsEnabled(backup.settings.notificationsEnabled);
+          }
+          if (backup.settings.notificationTiming) {
+            setNotificationTiming(backup.settings.notificationTiming);
+          }
+        }
+
+        setHasChanges(true);
+        setShowBackupModal(false);
+        alert('Backup restored successfully!');
+      } catch (err) {
+        alert('Failed to parse backup file. Please check the file format.');
+        console.error('Import error:', err);
+      }
+    };
+    reader.readAsText(file);
+
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  }, [schedule, pushToUndoStack]);
+
+  // Request notification permission
+  const requestNotificationPermission = async () => {
+    if (!('Notification' in window)) {
+      alert('This browser does not support notifications');
+      return false;
+    }
+
+    if (Notification.permission === 'granted') {
+      setNotificationsEnabled(true);
+      return true;
+    }
+
+    if (Notification.permission !== 'denied') {
+      const permission = await Notification.requestPermission();
+      if (permission === 'granted') {
+        setNotificationsEnabled(true);
+        return true;
+      }
+    }
+
+    alert('Please enable notifications in your browser settings');
+    return false;
+  };
+
+  // Send notification
+  const sendNotification = (title, body, icon = '📅') => {
+    if (!notificationsEnabled || Notification.permission !== 'granted') return;
+
+    const notification = new Notification(title, {
+      body,
+      icon: '/favicon.ico',
+      badge: '/favicon.ico',
+      tag: 'schedule-notification',
+      requireInteraction: false,
+      silent: false
+    });
+
+    notification.onclick = () => {
+      window.focus();
+      notification.close();
+    };
+
+    setTimeout(() => notification.close(), 10000);
+  };
+
+  // Check for upcoming activities and send notifications
+  useEffect(() => {
+    if (!notificationsEnabled) return;
+
+    const checkUpcomingActivities = () => {
+      const now = new Date();
+      const currentMinutes = now.getHours() * 60 + now.getMinutes();
+      const dayName = days[now.getDay() === 0 ? 6 : now.getDay() - 1];
+      const todaySchedule = schedule[dayName] || [];
+
+      // Reset notified activities at midnight
+      if (lastNotificationCheck.current) {
+        const lastDate = new Date(lastNotificationCheck.current);
+        if (lastDate.getDate() !== now.getDate()) {
+          setNotifiedActivities(new Set());
+        }
+      }
+      lastNotificationCheck.current = now.getTime();
+
+      todaySchedule.forEach(item => {
+        const itemStart = parseTimeToMinutes(item.time);
+        const minutesUntilStart = itemStart - currentMinutes;
+        const notificationKey = `${item.id}-${now.toDateString()}`;
+
+        // Check if we should notify (within timing window and not already notified)
+        if (minutesUntilStart > 0 &&
+            minutesUntilStart <= notificationTiming &&
+            !notifiedActivities.has(notificationKey)) {
+
+          sendNotification(
+            `⏰ Starting in ${minutesUntilStart} min`,
+            item.activity,
+            item.special ? '⭐' : '📅'
+          );
+
+          setNotifiedActivities(prev => new Set([...prev, notificationKey]));
+        }
+
+        // Notify when activity starts
+        if (minutesUntilStart === 0 && !notifiedActivities.has(`${notificationKey}-start`)) {
+          sendNotification(
+            '🎯 Activity Starting Now!',
+            item.activity,
+            item.special ? '⭐' : '🚀'
+          );
+
+          setNotifiedActivities(prev => new Set([...prev, `${notificationKey}-start`]));
+        }
+      });
+    };
+
+    // Check every 30 seconds
+    const interval = setInterval(checkUpcomingActivities, 30000);
+    checkUpcomingActivities(); // Initial check
+
+    return () => clearInterval(interval);
+  }, [notificationsEnabled, notificationTiming, schedule, notifiedActivities]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Don't trigger shortcuts when typing in inputs
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+        if (e.key === 'Escape') {
+          e.target.blur();
+          setEditingItem(null);
+          setShowAddForm(false);
+        }
+        return;
+      }
+
+      // Check for modifier keys
+      const isMod = e.metaKey || e.ctrlKey;
+
+      // Undo: Ctrl/Cmd + Z
+      if (isMod && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+        return;
+      }
+
+      // Redo: Ctrl/Cmd + Shift + Z or Ctrl/Cmd + Y
+      if ((isMod && e.key === 'z' && e.shiftKey) || (isMod && e.key === 'y')) {
+        e.preventDefault();
+        redo();
+        return;
+      }
+
+      // Save: Ctrl/Cmd + S
+      if (isMod && e.key === 's') {
+        e.preventDefault();
+        if (hasChanges) saveSchedule();
+        return;
+      }
+
+      // New activity: N
+      if (e.key === 'n' && !isMod) {
+        e.preventDefault();
+        setShowAddForm(true);
+        return;
+      }
+
+      // Quick add: Q
+      if (e.key === 'q' && !isMod) {
+        e.preventDefault();
+        setShowQuickAdd(!showQuickAdd);
+        return;
+      }
+
+      // Previous day: Left arrow or H
+      if ((e.key === 'ArrowLeft' || e.key === 'h') && !isMod) {
+        e.preventDefault();
+        prevDay();
+        return;
+      }
+
+      // Next day: Right arrow or L
+      if ((e.key === 'ArrowRight' || e.key === 'l') && !isMod) {
+        e.preventDefault();
+        nextDay();
+        return;
+      }
+
+      // Go to today: T
+      if (e.key === 't' && !isMod) {
+        e.preventDefault();
+        const today = new Date();
+        setSelectedDay(days[today.getDay() === 0 ? 6 : today.getDay() - 1]);
+        return;
+      }
+
+      // Toggle view: 1, 2, 3
+      if (e.key === '1' && !isMod) {
+        setView('schedule');
+        return;
+      }
+      if (e.key === '2' && !isMod) {
+        setView('dashboard');
+        return;
+      }
+      if (e.key === '3' && !isMod) {
+        setView('settings');
+        return;
+      }
+
+      // Escape: Close modals
+      if (e.key === 'Escape') {
+        setShowAddForm(false);
+        setShowQuickAdd(false);
+        setShowCopyModal(null);
+        setShowCloneWeekModal(false);
+        setShowBackupModal(false);
+        setShowKeyboardHelp(false);
+        setEditingItem(null);
+        setEditingGoal({ category: '', hours: 0 });
+        return;
+      }
+
+      // Show keyboard help: ?
+      if (e.key === '?' || (e.shiftKey && e.key === '/')) {
+        e.preventDefault();
+        setShowKeyboardHelp(!showKeyboardHelp);
+        return;
+      }
+
+      // Focus mode: F
+      if (e.key === 'f' && !isMod && currentActivity) {
+        e.preventDefault();
+        if (focusMode) {
+          stopFocusMode();
+        } else {
+          startFocusMode(currentActivity);
+        }
+        return;
+      }
+
+      // Pause/resume focus: Space (when in focus mode)
+      if (e.key === ' ' && focusMode) {
+        e.preventDefault();
+        setFocusPaused(!focusPaused);
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [undo, redo, hasChanges, saveSchedule, showQuickAdd, prevDay, nextDay, focusMode, focusPaused, currentActivity, showKeyboardHelp]);
+
+  // Focus Mode Timer
+  useEffect(() => {
+    if (focusMode && !focusPaused && focusTimeRemaining > 0) {
+      focusIntervalRef.current = setInterval(() => {
+        setFocusTimeRemaining(prev => {
+          if (prev <= 1) {
+            // Timer finished
+            handleFocusComplete();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+
+      return () => clearInterval(focusIntervalRef.current);
+    } else if (focusIntervalRef.current) {
+      clearInterval(focusIntervalRef.current);
+    }
+  }, [focusMode, focusPaused, focusTimeRemaining]);
+
+  // Focus mode functions
+  const startFocusMode = useCallback((activity = null) => {
+    setFocusActivity(activity);
+    setFocusType('work');
+    setFocusTimeRemaining(pomodoroSettings.workDuration * 60);
+    setFocusMode(true);
+    setFocusPaused(false);
+  }, [pomodoroSettings.workDuration]);
+
+  const stopFocusMode = useCallback(() => {
+    setFocusMode(false);
+    setFocusActivity(null);
+    setFocusTimeRemaining(0);
+    setFocusPaused(false);
+    if (focusIntervalRef.current) {
+      clearInterval(focusIntervalRef.current);
+    }
+  }, []);
+
+  const handleFocusComplete = useCallback(() => {
+    // Play sound if enabled
+    if (focusSoundEnabled) {
+      try {
+        const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdH2Onp+cnZuZl5eXmJmbnp+gnp2bmJWTkY+OjY2Ojo+RlJebnp+fnp2bmJWSkI6MioqKi42PlZmenp2bmJWSkI6MiomJiYqMj5Oam52dnJqXlJGOjIqIh4eHiImLj5OXmp2dnJuZlpOQjYuJh4aGhoaHiYuOkpaZm5ycm5mWk5CNi4mHhoWFhYWGiIqNkJSXmpubmpmXlJGOjImHhoWEhISEhYeJjI+SlZiampqZl5WSkI2LiIaFhIODg4OEhoiLjpGUl5mampqYlpOQjouIhoWEg4ODg4OFh4mMj5KVl5mampqYlpOQjouIhoWEg4KCgoKEhoiLjpGUl5mampqYlpOQjouIhoWEg4KCgoKDhYeKjI+SlZeZmpqZl5WSkI2LiIaFhIOCgoKChIaIi46RlJeZmpqZmJaUkY6MiYeGhIOCgoKCg4WGiYyPkpWYmZqamJaUkY6MiYeGhIOCgoKCg4WGiYyPkpWYmZqamJaUkY6MiYeGhIOCgoKCg4WGiYyPkpWYmZqal5WTkI2KiIWEg4KBgYGBg4WGiYyPkpWYmZqal5WTkI2KiIWEg4KBgYGBg4WGiYyPkpWYmZqal5WTkI2KiIWEg4KBgYGBg4SGiYuOkZSXmZqal5WTkI2KiIWEg4KBgYGBgoSGiIuOkZSXmZqal5WTkI2KiIWEg4KBgYGBgoSGiIuOkZSXmZqal5WTkI2KiIWEg4KBgYGBgoSGiIuOkZSXmZqal5WTkI2KiIWEg4KBgYGBgoSGiIuOkZSXmZqal5WTkI2KiIWEg4KBgYGB');
+        audio.volume = 0.5;
+        audio.play().catch(() => {});
+      } catch (e) {}
+    }
+
+    // Send notification
+    if (notificationsEnabled && Notification.permission === 'granted') {
+      const title = focusType === 'work' ? '🎉 Focus session complete!' : '⏰ Break time over!';
+      const body = focusType === 'work'
+        ? `Great job! Take a ${pomodoroCount + 1 >= pomodoroSettings.longBreakInterval ? pomodoroSettings.longBreak : pomodoroSettings.shortBreak} minute break.`
+        : 'Ready for another focus session?';
+      new Notification(title, { body });
+    }
+
+    if (focusType === 'work') {
+      // Completed a work session
+      const newCount = pomodoroCount + 1;
+      setPomodoroCount(newCount);
+
+      // Start break
+      const isLongBreak = newCount % pomodoroSettings.longBreakInterval === 0;
+      setFocusType('break');
+      setFocusTimeRemaining((isLongBreak ? pomodoroSettings.longBreak : pomodoroSettings.shortBreak) * 60);
+    } else {
+      // Completed a break, start new work session
+      setFocusType('work');
+      setFocusTimeRemaining(pomodoroSettings.workDuration * 60);
+    }
+  }, [focusType, pomodoroCount, pomodoroSettings, notificationsEnabled, focusSoundEnabled]);
+
+  const skipFocusPhase = useCallback(() => {
+    if (focusType === 'work') {
+      // Skip to break
+      const newCount = pomodoroCount + 1;
+      setPomodoroCount(newCount);
+      const isLongBreak = newCount % pomodoroSettings.longBreakInterval === 0;
+      setFocusType('break');
+      setFocusTimeRemaining((isLongBreak ? pomodoroSettings.longBreak : pomodoroSettings.shortBreak) * 60);
+    } else {
+      // Skip to work
+      setFocusType('work');
+      setFocusTimeRemaining(pomodoroSettings.workDuration * 60);
+    }
+  }, [focusType, pomodoroCount, pomodoroSettings]);
+
+  const formatFocusTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // Save recurring patterns to localStorage
+  useEffect(() => {
+    localStorage.setItem('recurringPatterns', JSON.stringify(recurringPatterns));
+  }, [recurringPatterns]);
+
+  // Save activity history to localStorage
+  useEffect(() => {
+    localStorage.setItem('activityHistory', JSON.stringify(activityHistory));
+  }, [activityHistory]);
+
+  // Track activity completions for statistics
+  const trackActivityCompletion = useCallback((activity, day) => {
+    const entry = {
+      id: generateId(),
+      activityName: activity.activity,
+      category: activity.category,
+      plannedDuration: activity.duration,
+      day: day,
+      date: new Date().toISOString(),
+      weekNumber: getWeekNumber(new Date())
+    };
+    setActivityHistory(prev => [...prev.slice(-500), entry]); // Keep last 500 entries
+  }, []);
+
+  // Get week number
+  const getWeekNumber = (date) => {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+  };
+
+  // Recurring pattern functions
+  const setRecurringPattern = useCallback((activityId, pattern) => {
+    // pattern: { days: ['Monday', 'Tuesday', ...], enabled: true }
+    if (pattern && pattern.days && pattern.days.length > 0) {
+      setRecurringPatterns(prev => ({
+        ...prev,
+        [activityId]: pattern
+      }));
+    } else {
+      setRecurringPatterns(prev => {
+        const newPatterns = { ...prev };
+        delete newPatterns[activityId];
+        return newPatterns;
+      });
+    }
+  }, []);
+
+  const applyRecurringPattern = useCallback((sourceActivity, sourceDay) => {
+    const pattern = recurringPatterns[sourceActivity.id];
+    if (!pattern || !pattern.enabled) return;
+
+    pushToUndoStack(schedule);
+    const newSchedule = { ...schedule };
+
+    pattern.days.forEach(targetDay => {
+      if (targetDay === sourceDay) return; // Skip source day
+
+      // Check if activity already exists on target day
+      const existsOnDay = newSchedule[targetDay]?.some(
+        a => a.activity === sourceActivity.activity && a.time === sourceActivity.time
+      );
+
+      if (!existsOnDay) {
+        const targetSchedule = newSchedule[targetDay] || [];
+        const newActivity = {
+          ...sourceActivity,
+          id: generateId(),
+          recurringSourceId: sourceActivity.id
+        };
+        newSchedule[targetDay] = [...targetSchedule, newActivity].sort((a, b) =>
+          parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time)
+        );
+      }
+    });
+
+    setSchedule(newSchedule);
+    setHasChanges(true);
+  }, [recurringPatterns, schedule, pushToUndoStack]);
+
+  // Calculate activity insights
+  const activityInsights = useMemo(() => {
+    const now = new Date();
+    const currentWeek = getWeekNumber(now);
+    const lastWeek = currentWeek - 1;
+
+    // Filter to recent history (last 4 weeks)
+    const recentHistory = activityHistory.filter(entry => {
+      const entryDate = new Date(entry.date);
+      const weeksDiff = currentWeek - entry.weekNumber;
+      return weeksDiff >= 0 && weeksDiff < 4;
+    });
+
+    // Category breakdown
+    const categoryTotals = {};
+    const categoryByWeek = {};
+    const activityFrequency = {};
+    const dayDistribution = {};
+
+    recentHistory.forEach(entry => {
+      // Category totals
+      categoryTotals[entry.category] = (categoryTotals[entry.category] || 0) + entry.plannedDuration;
+
+      // Category by week
+      if (!categoryByWeek[entry.weekNumber]) {
+        categoryByWeek[entry.weekNumber] = {};
+      }
+      categoryByWeek[entry.weekNumber][entry.category] =
+        (categoryByWeek[entry.weekNumber][entry.category] || 0) + entry.plannedDuration;
+
+      // Activity frequency
+      activityFrequency[entry.activityName] = (activityFrequency[entry.activityName] || 0) + 1;
+
+      // Day distribution
+      dayDistribution[entry.day] = (dayDistribution[entry.day] || 0) + entry.plannedDuration;
+    });
+
+    // Find most productive day
+    const mostProductiveDay = Object.entries(dayDistribution)
+      .sort((a, b) => b[1] - a[1])[0];
+
+    // Find top activities
+    const topActivities = Object.entries(activityFrequency)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5);
+
+    // Calculate week-over-week change
+    const thisWeekTotal = Object.values(categoryByWeek[currentWeek] || {}).reduce((a, b) => a + b, 0);
+    const lastWeekTotal = Object.values(categoryByWeek[lastWeek] || {}).reduce((a, b) => a + b, 0);
+    const weekChange = lastWeekTotal > 0 ? ((thisWeekTotal - lastWeekTotal) / lastWeekTotal * 100).toFixed(1) : 0;
+
+    // Calculate streak (consecutive days with completed activities)
+    let streak = 0;
+    const today = new Date();
+    for (let i = 0; i < 30; i++) {
+      const checkDate = new Date(today);
+      checkDate.setDate(today.getDate() - i);
+      const dateStr = checkDate.toISOString().split('T')[0];
+      const hasActivity = activityHistory.some(e => e.date.split('T')[0] === dateStr);
+      if (hasActivity) {
+        streak++;
+      } else if (i > 0) {
+        break;
+      }
+    }
+
+    return {
+      categoryTotals,
+      categoryByWeek,
+      topActivities,
+      mostProductiveDay,
+      thisWeekTotal,
+      lastWeekTotal,
+      weekChange,
+      streak,
+      totalTracked: recentHistory.length
+    };
+  }, [activityHistory]);
+
+  // Conflict Detection - find overlapping activities
+  const scheduleConflicts = useMemo(() => {
+    const conflicts = [];
+
+    days.forEach(day => {
+      const daySchedule = schedule[day] || [];
+      for (let i = 0; i < daySchedule.length; i++) {
+        for (let j = i + 1; j < daySchedule.length; j++) {
+          const a = daySchedule[i];
+          const b = daySchedule[j];
+
+          const aStart = parseTimeToMinutes(a.time);
+          const aEnd = aStart + a.duration;
+          const bStart = parseTimeToMinutes(b.time);
+          const bEnd = bStart + b.duration;
+
+          // Check for overlap
+          if (aStart < bEnd && bStart < aEnd) {
+            conflicts.push({
+              day,
+              activity1: a,
+              activity2: b,
+              overlapMinutes: Math.min(aEnd, bEnd) - Math.max(aStart, bStart)
+            });
+          }
+        }
+      }
+    });
+
+    return conflicts;
+  }, [schedule]);
+
+  // Find available time slots for auto-scheduler
+  const findAvailableSlots = useCallback((duration, preferredDays, preferredTimeRange) => {
+    const slots = [];
+    const daysToCheck = preferredDays.length > 0 ? preferredDays : days;
+
+    // Define time ranges
+    const timeRanges = {
+      morning: { start: 6 * 60, end: 12 * 60 },    // 6 AM - 12 PM
+      afternoon: { start: 12 * 60, end: 17 * 60 }, // 12 PM - 5 PM
+      evening: { start: 17 * 60, end: 22 * 60 },   // 5 PM - 10 PM
+      any: { start: 6 * 60, end: 22 * 60 }         // 6 AM - 10 PM
+    };
+
+    const range = timeRanges[preferredTimeRange] || timeRanges.any;
+
+    daysToCheck.forEach(day => {
+      const daySchedule = (schedule[day] || []).slice().sort((a, b) =>
+        parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time)
+      );
+
+      // Check gaps between activities
+      let currentTime = range.start;
+
+      for (const activity of daySchedule) {
+        const actStart = parseTimeToMinutes(activity.time);
+        const actEnd = actStart + activity.duration;
+
+        // Check if there's a gap before this activity
+        if (actStart > currentTime && actStart >= range.start && currentTime < range.end) {
+          const gapStart = Math.max(currentTime, range.start);
+          const gapEnd = Math.min(actStart, range.end);
+          const gapDuration = gapEnd - gapStart;
+
+          if (gapDuration >= duration) {
+            slots.push({
+              day,
+              startMinutes: gapStart,
+              endMinutes: gapStart + duration,
+              time: formatMinutesToTime(gapStart),
+              score: calculateSlotScore(day, gapStart, preferredTimeRange)
+            });
+          }
+        }
+
+        currentTime = Math.max(currentTime, actEnd);
+      }
+
+      // Check gap after last activity
+      if (currentTime < range.end) {
+        const gapDuration = range.end - currentTime;
+        if (gapDuration >= duration) {
+          slots.push({
+            day,
+            startMinutes: currentTime,
+            endMinutes: currentTime + duration,
+            time: formatMinutesToTime(currentTime),
+            score: calculateSlotScore(day, currentTime, preferredTimeRange)
+          });
+        }
+      }
+    });
+
+    // Sort by score (best slots first)
+    return slots.sort((a, b) => b.score - a.score).slice(0, 10);
+  }, [schedule]);
+
+  // Calculate slot score for ranking suggestions
+  const calculateSlotScore = (day, startMinutes, preferredTimeRange) => {
+    let score = 100;
+
+    // Prefer weekdays for work-related, weekends for personal
+    const isWeekend = day === 'Saturday' || day === 'Sunday';
+
+    // Time preference bonus
+    const hour = Math.floor(startMinutes / 60);
+    if (preferredTimeRange === 'morning' && hour >= 6 && hour < 10) score += 20;
+    if (preferredTimeRange === 'afternoon' && hour >= 12 && hour < 15) score += 20;
+    if (preferredTimeRange === 'evening' && hour >= 17 && hour < 20) score += 20;
+
+    // Avoid very early or very late
+    if (hour < 7) score -= 30;
+    if (hour > 20) score -= 20;
+
+    // Balanced distribution - prefer days with fewer activities
+    const daySchedule = schedule[day] || [];
+    score -= daySchedule.length * 5;
+
+    return score;
+  };
+
+  // Format minutes to time string
+  const formatMinutesToTime = (minutes) => {
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    const period = hours >= 12 ? 'PM' : 'AM';
+    const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+    return `${displayHours}:${mins.toString().padStart(2, '0')} ${period}`;
+  };
+
+  // Add activity from auto-scheduler suggestion
+  const addFromSuggestion = useCallback((slot, activityName, duration, category) => {
+    pushToUndoStack(schedule);
+
+    const newActivity = {
+      id: generateId(),
+      time: slot.time,
+      activity: activityName,
+      duration: duration,
+      category: category,
+      emoji: getCategoryEmoji(category)
+    };
+
+    const daySchedule = schedule[slot.day] || [];
+    const newSchedule = {
+      ...schedule,
+      [slot.day]: [...daySchedule, newActivity].sort((a, b) =>
+        parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time)
+      )
+    };
+
+    setSchedule(newSchedule);
+    setHasChanges(true);
+    setShowAutoScheduler(false);
+    setAutoSchedulerRequest({
+      activityName: '',
+      duration: 30,
+      category: 'Personal',
+      preferredDays: [],
+      preferredTimeRange: 'any'
+    });
+  }, [schedule, pushToUndoStack]);
+
+  // Get emoji for category
+  const getCategoryEmoji = (category) => {
+    const emojiMap = {
+      'Work': '💼',
+      'Personal': '🌟',
+      'Exercise': '🏃',
+      'Meals': '🍽️',
+      'Family': '👨‍👩‍👧‍👦',
+      'Development': '💻',
+      'Music': '🎵',
+      'Health': '❤️',
+      'Learning': '📚',
+      'Social': '👥'
+    };
+    return emojiMap[category] || '📌';
+  };
+
+  // Save weekly reflections to localStorage
+  useEffect(() => {
+    localStorage.setItem('weeklyReflections', JSON.stringify(weeklyReflections));
+  }, [weeklyReflections]);
+
+  // Save category budgets to localStorage
+  useEffect(() => {
+    localStorage.setItem('categoryBudgets', JSON.stringify(categoryBudgets));
+  }, [categoryBudgets]);
+
+  // Save custom templates to localStorage
+  useEffect(() => {
+    localStorage.setItem('customTemplates', JSON.stringify(customTemplates));
+  }, [customTemplates]);
+
+  // Get current week number for reflections
+  const getCurrentWeekKey = () => {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), 0, 1);
+    const diff = now - start;
+    const oneWeek = 1000 * 60 * 60 * 24 * 7;
+    const weekNum = Math.floor(diff / oneWeek);
+    return `${now.getFullYear()}-W${weekNum}`;
+  };
+
+  // Calculate time spent per category this week
+  const categoryTimeSpent = useMemo(() => {
+    const timeSpent = {};
+    days.forEach(day => {
+      const daySchedule = schedule[day] || [];
+      daySchedule.forEach(activity => {
+        const cat = activity.category;
+        timeSpent[cat] = (timeSpent[cat] || 0) + activity.duration;
+      });
+    });
+    return timeSpent;
+  }, [schedule]);
+
+  // Calculate budget usage percentages
+  const budgetUsage = useMemo(() => {
+    const usage = {};
+    Object.keys(categoryBudgets).forEach(category => {
+      const budget = categoryBudgets[category];
+      const spent = categoryTimeSpent[category] || 0;
+      usage[category] = {
+        budget: budget,
+        spent: spent,
+        percentage: budget > 0 ? Math.round((spent / budget) * 100) : 0,
+        remaining: budget - spent,
+        isOver: spent > budget
+      };
+    });
+    return usage;
+  }, [categoryBudgets, categoryTimeSpent]);
+
+  // Get categories that are near or over budget
+  const budgetWarnings = useMemo(() => {
+    const warnings = [];
+    Object.entries(budgetUsage).forEach(([category, data]) => {
+      if (data.percentage >= 90) {
+        warnings.push({
+          category,
+          ...data,
+          severity: data.isOver ? 'over' : 'warning'
+        });
+      }
+    });
+    return warnings.sort((a, b) => b.percentage - a.percentage);
+  }, [budgetUsage]);
+
+  // Save weekly reflection
+  const saveWeeklyReflection = useCallback(() => {
+    const weekKey = getCurrentWeekKey();
+    setWeeklyReflections(prev => ({
+      ...prev,
+      [weekKey]: {
+        ...currentReflection,
+        savedAt: new Date().toISOString(),
+        stats: { ...stats }
+      }
+    }));
+    setCurrentReflection({ wentWell: '', toImprove: '', nextWeekIntentions: '' });
+  }, [currentReflection, stats]);
+
+  // Load reflection for current week if exists
+  useEffect(() => {
+    const weekKey = getCurrentWeekKey();
+    if (weeklyReflections[weekKey]) {
+      setCurrentReflection({
+        wentWell: weeklyReflections[weekKey].wentWell || '',
+        toImprove: weeklyReflections[weekKey].toImprove || '',
+        nextWeekIntentions: weeklyReflections[weekKey].nextWeekIntentions || ''
+      });
+    }
+  }, [showWeeklyReview]);
+
+  // Save activity as custom template
+  const saveAsTemplate = useCallback((activity, templateName) => {
+    const template = {
+      id: generateId(),
+      name: templateName || activity.activity,
+      emoji: activity.emoji,
+      activity: activity.activity,
+      duration: activity.duration,
+      category: activity.category,
+      notes: activity.notes || '',
+      createdAt: new Date().toISOString()
+    };
+    setCustomTemplates(prev => [...prev, template]);
+    setShowSaveTemplate(null);
+    setNewTemplateName('');
+  }, []);
+
+  // Delete custom template
+  const deleteTemplate = useCallback((templateId) => {
+    setCustomTemplates(prev => prev.filter(t => t.id !== templateId));
+  }, []);
+
+  // Add activity from template
+  const addFromTemplate = useCallback((template, day) => {
+    pushToUndoStack(schedule);
+    const newActivity = {
+      id: generateId(),
+      time: '9:00 AM',
+      activity: template.activity,
+      duration: template.duration,
+      category: template.category,
+      emoji: template.emoji,
+      notes: template.notes || ''
+    };
+
+    const targetDay = day || selectedDay;
+    const daySchedule = schedule[targetDay] || [];
+    const newSchedule = {
+      ...schedule,
+      [targetDay]: [...daySchedule, newActivity].sort((a, b) =>
+        parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time)
+      )
+    };
+
+    setSchedule(newSchedule);
+    setHasChanges(true);
+  }, [schedule, selectedDay, pushToUndoStack]);
+
+  // Set category budget
+  const setCategoryBudget = useCallback((category, minutes) => {
+    if (minutes > 0) {
+      setCategoryBudgets(prev => ({ ...prev, [category]: minutes }));
+    } else {
+      setCategoryBudgets(prev => {
+        const newBudgets = { ...prev };
+        delete newBudgets[category];
+        return newBudgets;
+      });
+    }
+  }, []);
+
+  // Log today's activities for statistics (run once per day)
+  useEffect(() => {
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+    const lastLogged = localStorage.getItem('lastActivityLog');
+
+    if (lastLogged !== todayStr) {
+      const dayName = days[today.getDay() === 0 ? 6 : today.getDay() - 1];
+      const todaySchedule = schedule[dayName] || [];
+
+      todaySchedule.forEach(activity => {
+        trackActivityCompletion(activity, dayName);
+      });
+
+      localStorage.setItem('lastActivityLog', todayStr);
+    }
+  }, [schedule, trackActivityCompletion]);
 
   // Load schedule from cloud
   useEffect(() => {
@@ -532,11 +1690,32 @@ export default function JustinSchedule() {
     return selectedDay === today && item.id === currentActivity.id;
   }, [currentActivity, currentTime, selectedDay]);
 
-  // Filter schedule
+  // Filter schedule with search and category filter
   const filteredSchedule = useMemo(() => {
-    const daySchedule = schedule[selectedDay] || [];
-    return showTransitions ? daySchedule : daySchedule.filter(item => item.category !== 'Transition');
-  }, [schedule, selectedDay, showTransitions]);
+    let daySchedule = schedule[selectedDay] || [];
+
+    // Filter out transitions if needed
+    if (!showTransitions) {
+      daySchedule = daySchedule.filter(item => item.category !== 'Transition');
+    }
+
+    // Apply category filter
+    if (categoryFilter !== 'all') {
+      daySchedule = daySchedule.filter(item => item.category === categoryFilter);
+    }
+
+    // Apply search query
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      daySchedule = daySchedule.filter(item =>
+        item.activity.toLowerCase().includes(query) ||
+        item.category.toLowerCase().includes(query) ||
+        item.time.toLowerCase().includes(query)
+      );
+    }
+
+    return daySchedule;
+  }, [schedule, selectedDay, showTransitions, categoryFilter, searchQuery]);
 
   // Calculate stats
   const stats = useMemo(() => {
@@ -558,6 +1737,46 @@ export default function JustinSchedule() {
 
     return result;
   }, [schedule, selectedDay]);
+
+  // Calculate goal progress
+  const goalProgress = useMemo(() => {
+    const progress = {};
+    Object.entries(weeklyGoals).forEach(([category, goalHours]) => {
+      const actualMinutes = stats[category]?.weekly || 0;
+      const goalMinutes = goalHours * 60;
+      const percentage = goalMinutes > 0 ? Math.min(100, (actualMinutes / goalMinutes) * 100) : 0;
+      progress[category] = {
+        goalMinutes,
+        actualMinutes,
+        percentage,
+        remaining: Math.max(0, goalMinutes - actualMinutes),
+        exceeded: actualMinutes > goalMinutes
+      };
+    });
+    return progress;
+  }, [weeklyGoals, stats]);
+
+  // Save goal
+  const saveGoal = (category, hours) => {
+    if (hours <= 0) {
+      const newGoals = { ...weeklyGoals };
+      delete newGoals[category];
+      setWeeklyGoals(newGoals);
+    } else {
+      setWeeklyGoals({ ...weeklyGoals, [category]: hours });
+    }
+    setShowGoalEditor(false);
+    setEditingGoal({ category: '', hours: 0 });
+  };
+
+  // Start editing a goal
+  const startGoalEdit = (category) => {
+    setEditingGoal({
+      category,
+      hours: weeklyGoals[category] || Math.round((stats[category]?.weekly || 0) / 60)
+    });
+    setShowGoalEditor(true);
+  };
 
   // Recalculate times
   const recalculateTimes = useCallback((daySchedule) => {
@@ -668,17 +1887,18 @@ export default function JustinSchedule() {
 
   const handleDrop = (e, dropIndex) => {
     e.preventDefault();
-    
+
     // Clear timeout
     if (dragTimeout.current) {
       clearTimeout(dragTimeout.current);
     }
-    
+
     if (!draggedItem || draggedItem.index === dropIndex) {
       handleDragEnd(e);
       return;
     }
 
+    pushToUndoStack(schedule);
     const newDaySchedule = [...schedule[selectedDay]];
     const [removed] = newDaySchedule.splice(draggedItem.index, 1);
     newDaySchedule.splice(dropIndex, 0, removed);
@@ -686,11 +1906,11 @@ export default function JustinSchedule() {
     const recalculated = recalculateTimes(newDaySchedule);
     setSchedule({ ...schedule, [selectedDay]: recalculated });
     setHasChanges(true);
-    
+
     // Set dropped item for bounce animation
     setDroppedItemId(removed.id);
     setTimeout(() => setDroppedItemId(null), 400);
-    
+
     // Clean up
     if (dragNode.current) {
       dragNode.current.classList.remove('dragging', 'floating');
@@ -704,14 +1924,16 @@ export default function JustinSchedule() {
   // Edit handlers
   const startEdit = (item) => {
     setEditingItem(item.id);
-    setEditValues({ 
-      activity: item.activity, 
+    setEditValues({
+      activity: item.activity,
       duration: item.duration,
-      time: item.time 
+      time: item.time,
+      notes: item.notes || ''
     });
   };
 
   const saveEdit = (itemId) => {
+    pushToUndoStack(schedule);
     const newDaySchedule = schedule[selectedDay].map(item =>
       item.id === itemId ? { ...item, ...editValues } : item
     );
@@ -723,11 +1945,12 @@ export default function JustinSchedule() {
 
   const cancelEdit = () => {
     setEditingItem(null);
-    setEditValues({ activity: '', duration: 0, time: '' });
+    setEditValues({ activity: '', duration: 0, time: '', notes: '' });
   };
 
   const deleteItem = (itemId) => {
     if (confirm('Delete this activity?')) {
+      pushToUndoStack(schedule);
       const newDaySchedule = schedule[selectedDay].filter(item => item.id !== itemId);
       const recalculated = recalculateTimes(newDaySchedule);
       setSchedule({ ...schedule, [selectedDay]: recalculated });
@@ -738,10 +1961,11 @@ export default function JustinSchedule() {
 
   const addNewItem = () => {
     if (!newItem.activity.trim()) return;
-    
+
+    pushToUndoStack(schedule);
     const daySchedule = schedule[selectedDay];
     const lastItem = daySchedule[daySchedule.length - 1];
-    const newTime = lastItem 
+    const newTime = lastItem
       ? formatMinutesToTime(parseTimeToMinutes(lastItem.time) + lastItem.duration)
       : '9:00 AM';
 
@@ -750,7 +1974,8 @@ export default function JustinSchedule() {
       time: newTime,
       activity: newItem.activity,
       duration: newItem.duration,
-      category: newItem.category
+      category: newItem.category,
+      notes: newItem.notes || ''
     };
 
     setSchedule({
@@ -759,14 +1984,15 @@ export default function JustinSchedule() {
     });
     setHasChanges(true);
     setShowAddForm(false);
-    setNewItem({ activity: '', duration: 30, category: 'Personal' });
+    setNewItem({ activity: '', duration: 30, category: 'Personal', notes: '' });
   };
 
   // Quick Add from Template
   const quickAddFromTemplate = (template) => {
+    pushToUndoStack(schedule);
     const daySchedule = schedule[selectedDay];
     const lastItem = daySchedule[daySchedule.length - 1];
-    const newTime = lastItem 
+    const newTime = lastItem
       ? formatMinutesToTime(parseTimeToMinutes(lastItem.time) + lastItem.duration)
       : '9:00 AM';
 
@@ -838,19 +2064,20 @@ export default function JustinSchedule() {
 
   // Duplicate Activity
   const duplicateActivity = (item) => {
+    pushToUndoStack(schedule);
     const daySchedule = schedule[selectedDay];
     const itemIndex = daySchedule.findIndex(i => i.id === item.id);
     const newId = generateId();
-    
+
     const duplicated = {
       ...item,
       id: newId,
       activity: `${item.activity} (copy)`
     };
-    
+
     const newSchedule = [...daySchedule];
     newSchedule.splice(itemIndex + 1, 0, duplicated);
-    
+
     const recalculated = recalculateTimes(newSchedule);
     setSchedule({ ...schedule, [selectedDay]: recalculated });
     setHasChanges(true);
@@ -861,9 +2088,10 @@ export default function JustinSchedule() {
 
   // Copy Activity to Other Days
   const copyToDay = (item, targetDay) => {
+    pushToUndoStack(schedule);
     const targetSchedule = schedule[targetDay] || [];
     const lastItem = targetSchedule[targetSchedule.length - 1];
-    const newTime = lastItem 
+    const newTime = lastItem
       ? formatMinutesToTime(parseTimeToMinutes(lastItem.time) + lastItem.duration)
       : '9:00 AM';
 
@@ -875,7 +2103,7 @@ export default function JustinSchedule() {
 
     const newSchedule = [...targetSchedule, copiedActivity];
     const recalculated = recalculateTimes(newSchedule);
-    
+
     setSchedule({ ...schedule, [targetDay]: recalculated });
     setHasChanges(true);
     setShowCopyModal(null);
@@ -884,6 +2112,7 @@ export default function JustinSchedule() {
 
   // Quick Time Adjust
   const quickTimeAdjust = (item, adjustment) => {
+    pushToUndoStack(schedule);
     const newDuration = Math.max(15, Math.min(480, item.duration + adjustment));
     const newDaySchedule = schedule[selectedDay].map(i =>
       i.id === item.id ? { ...i, duration: newDuration } : i
@@ -981,12 +2210,25 @@ export default function JustinSchedule() {
                   {syncStatus === 'syncing' ? 'Syncing...' : syncStatus === 'synced' ? 'Synced' : syncStatus === 'error' ? 'Offline' : 'Local'}
                 </div>
 
+                {/* Keyboard Shortcuts Help */}
+                <button
+                  onClick={() => setShowKeyboardHelp(true)}
+                  className={`p-2.5 rounded-xl transition-all hover:scale-110 ${
+                    darkMode
+                      ? 'bg-white/10 hover:bg-white/20 text-white/60'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-500'
+                  }`}
+                  title="Keyboard shortcuts (?)"
+                >
+                  <Keyboard className="w-5 h-5" />
+                </button>
+
                 {/* Dark Mode Toggle */}
                 <button
                   onClick={() => setDarkMode(!darkMode)}
                   className={`p-2.5 rounded-xl transition-all hover:scale-110 ${
-                    darkMode 
-                      ? 'bg-white/10 hover:bg-white/20 text-yellow-400' 
+                    darkMode
+                      ? 'bg-white/10 hover:bg-white/20 text-yellow-400'
                       : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
                   }`}
                 >
@@ -1007,15 +2249,15 @@ export default function JustinSchedule() {
 
             {/* Current Activity Banner */}
             {currentActivity && (
-              <div 
+              <div
                 className={`p-4 rounded-xl border-2 ${darkMode ? 'bg-white/5 border-white/10' : 'bg-white border-gray-200'}`}
                 style={{ borderColor: categories[currentActivity.category]?.accent }}
               >
                 <div className="flex items-center gap-4">
                   <div className="flex-shrink-0">
-                    <ProgressRing 
-                      progress={currentActivity.progress} 
-                      size={60} 
+                    <ProgressRing
+                      progress={currentActivity.progress}
+                      size={60}
                       strokeWidth={5}
                       color={categories[currentActivity.category]?.accent}
                     />
@@ -1031,6 +2273,23 @@ export default function JustinSchedule() {
                       {currentActivity.remaining} min remaining
                     </p>
                   </div>
+                  {/* Focus Mode Button */}
+                  <button
+                    onClick={() => focusMode ? stopFocusMode() : startFocusMode(currentActivity)}
+                    className={`p-3 rounded-xl transition-all hover:scale-105 ${
+                      focusMode
+                        ? 'text-white shadow-lg'
+                        : darkMode
+                          ? 'bg-white/10 hover:bg-white/20 text-white/70'
+                          : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                    }`}
+                    style={focusMode ? {
+                      background: `linear-gradient(to right, ${theme.primary}, ${theme.accent})`
+                    } : {}}
+                    title={focusMode ? 'Stop focus mode (F)' : 'Start focus mode (F)'}
+                  >
+                    {focusMode ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+                  </button>
                 </div>
               </div>
             )}
@@ -1095,11 +2354,11 @@ export default function JustinSchedule() {
         {/* ACTION BAR */}
         {/* ===================================== */}
         <div className="flex items-center justify-between mb-4 px-1">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={() => setShowAddForm(true)}
               className="px-4 py-2 rounded-xl text-sm font-medium text-white flex items-center gap-2 transition-all hover:scale-[1.02] shadow-lg"
-              style={{ 
+              style={{
                 background: `linear-gradient(to right, ${theme.primary}, ${theme.accent})`,
                 boxShadow: `0 4px 15px ${theme.primary}40`
               }}
@@ -1107,18 +2366,18 @@ export default function JustinSchedule() {
               <Plus className="w-4 h-4" />
               Add
             </button>
-            
+
             {/* Quick Add Templates Button */}
             <button
               onClick={() => setShowQuickAdd(!showQuickAdd)}
               className={`px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-2 transition-all hover:scale-[1.02] ${
                 showQuickAdd
                   ? 'text-white shadow-lg'
-                  : darkMode 
-                    ? 'bg-white/10 hover:bg-white/20 text-white/80' 
+                  : darkMode
+                    ? 'bg-white/10 hover:bg-white/20 text-white/80'
                     : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
               }`}
-              style={showQuickAdd ? { 
+              style={showQuickAdd ? {
                 background: `linear-gradient(to right, ${theme.secondary}, ${theme.primary})`,
                 boxShadow: `0 4px 15px ${theme.secondary}40`
               } : {}}
@@ -1126,15 +2385,51 @@ export default function JustinSchedule() {
               <Zap className="w-4 h-4" />
               Quick
             </button>
-            
+
+            {/* Undo/Redo Buttons */}
+            <div className="flex items-center gap-1">
+              <button
+                onClick={undo}
+                disabled={undoStack.length === 0}
+                className={`p-2 rounded-lg text-sm font-medium transition-all ${
+                  undoStack.length === 0
+                    ? darkMode
+                      ? 'bg-white/5 text-white/20 cursor-not-allowed'
+                      : 'bg-gray-50 text-gray-300 cursor-not-allowed'
+                    : darkMode
+                      ? 'bg-white/10 hover:bg-white/20 text-white/70 hover:text-white'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-gray-800'
+                }`}
+                title={`Undo (${undoStack.length} steps)`}
+              >
+                <Undo2 className="w-4 h-4" />
+              </button>
+              <button
+                onClick={redo}
+                disabled={redoStack.length === 0}
+                className={`p-2 rounded-lg text-sm font-medium transition-all ${
+                  redoStack.length === 0
+                    ? darkMode
+                      ? 'bg-white/5 text-white/20 cursor-not-allowed'
+                      : 'bg-gray-50 text-gray-300 cursor-not-allowed'
+                    : darkMode
+                      ? 'bg-white/10 hover:bg-white/20 text-white/70 hover:text-white'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-gray-800'
+                }`}
+                title={`Redo (${redoStack.length} steps)`}
+              >
+                <Redo2 className="w-4 h-4" />
+              </button>
+            </div>
+
             {hasChanges && (
               <>
                 <button
                   onClick={saveSchedule}
                   disabled={isSyncing}
                   className={`px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-2 transition-all ${
-                    darkMode 
-                      ? 'bg-green-500/20 hover:bg-green-500/30 text-green-400' 
+                    darkMode
+                      ? 'bg-green-500/20 hover:bg-green-500/30 text-green-400'
                       : 'bg-green-100 hover:bg-green-200 text-green-700'
                   }`}
                 >
@@ -1144,8 +2439,8 @@ export default function JustinSchedule() {
                 <button
                   onClick={resetSchedule}
                   className={`px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-2 transition-all ${
-                    darkMode 
-                      ? 'bg-white/5 hover:bg-white/10 text-white/70' 
+                    darkMode
+                      ? 'bg-white/5 hover:bg-white/10 text-white/70'
                       : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
                   }`}
                 >
@@ -1273,10 +2568,1767 @@ export default function JustinSchedule() {
         )}
 
         {/* ===================================== */}
+        {/* CLONE WEEK MODAL */}
+        {/* ===================================== */}
+        {showCloneWeekModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+            <GlassCard darkMode={darkMode} className="w-full max-w-md animate-scale-in">
+              <div className="p-5">
+                <h3 className={`font-bold mb-4 flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                  <CopyPlus className="w-5 h-5" style={{ color: theme.primary }} />
+                  Clone Schedule
+                </h3>
+
+                <p className={`text-sm mb-4 ${darkMode ? 'text-white/60' : 'text-gray-600'}`}>
+                  Copy a day's schedule to all other days, or clear everything.
+                </p>
+
+                {/* Clone Source Day to All */}
+                <div className="mb-4">
+                  <p className={`text-xs font-medium mb-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                    COPY DAY TO ALL OTHERS
+                  </p>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {days.map(day => (
+                      <button
+                        key={day}
+                        onClick={() => cloneDayToAll(day)}
+                        className={`px-3 py-2.5 rounded-xl text-sm font-medium transition-all hover:scale-[1.02] ${
+                          darkMode
+                            ? 'bg-white/5 hover:bg-white/10 text-white/80'
+                            : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                        }`}
+                      >
+                        {day.slice(0, 3)}
+                      </button>
+                    ))}
+                  </div>
+                  <p className={`text-xs mt-2 ${darkMode ? 'text-white/40' : 'text-gray-400'}`}>
+                    This will copy the selected day's schedule to all other days.
+                  </p>
+                </div>
+
+                {/* Danger Zone */}
+                <div className={`p-3 rounded-xl border-2 border-dashed ${
+                  darkMode ? 'border-red-500/30 bg-red-500/5' : 'border-red-200 bg-red-50'
+                }`}>
+                  <p className={`text-xs font-medium mb-2 ${darkMode ? 'text-red-400' : 'text-red-600'}`}>
+                    DANGER ZONE
+                  </p>
+                  <button
+                    onClick={clearAllDays}
+                    className={`w-full px-4 py-2.5 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 ${
+                      darkMode
+                        ? 'bg-red-500/20 hover:bg-red-500/30 text-red-400'
+                        : 'bg-red-100 hover:bg-red-200 text-red-700'
+                    }`}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Clear All Days
+                  </button>
+                </div>
+
+                <button
+                  onClick={() => setShowCloneWeekModal(false)}
+                  className={`w-full mt-4 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    darkMode
+                      ? 'bg-white/10 hover:bg-white/20 text-white/70'
+                      : 'bg-gray-200 hover:bg-gray-300 text-gray-600'
+                  }`}
+                >
+                  Close
+                </button>
+              </div>
+            </GlassCard>
+          </div>
+        )}
+
+        {/* ===================================== */}
+        {/* BACKUP RESTORE MODAL */}
+        {/* ===================================== */}
+        {showBackupModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+            <GlassCard darkMode={darkMode} className="w-full max-w-md animate-scale-in">
+              <div className="p-5">
+                <h3 className={`font-bold mb-4 flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                  <Archive className="w-5 h-5" style={{ color: theme.primary }} />
+                  Backup & Restore
+                </h3>
+
+                <p className={`text-sm mb-4 ${darkMode ? 'text-white/60' : 'text-gray-600'}`}>
+                  Export your schedule as a backup file or restore from a previous backup.
+                </p>
+
+                {/* Export Backup */}
+                <button
+                  onClick={() => { exportBackup(); setShowBackupModal(false); }}
+                  className={`w-full mb-3 flex items-center justify-between px-4 py-4 rounded-xl transition-all hover:scale-[1.01] ${
+                    darkMode
+                      ? 'bg-white/5 hover:bg-white/10'
+                      : 'bg-gray-100 hover:bg-gray-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                      darkMode ? 'bg-green-500/20' : 'bg-green-100'
+                    }`}>
+                      <Download className="w-5 h-5 text-green-500" />
+                    </div>
+                    <div className="text-left">
+                      <p className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                        Export Backup
+                      </p>
+                      <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                        Download schedule, goals & settings
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight className={`w-4 h-4 ${darkMode ? 'text-white/40' : 'text-gray-400'}`} />
+                </button>
+
+                {/* Import Backup */}
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className={`w-full mb-4 flex items-center justify-between px-4 py-4 rounded-xl transition-all hover:scale-[1.01] ${
+                    darkMode
+                      ? 'bg-white/5 hover:bg-white/10'
+                      : 'bg-gray-100 hover:bg-gray-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                      darkMode ? 'bg-blue-500/20' : 'bg-blue-100'
+                    }`}>
+                      <Upload className="w-5 h-5 text-blue-500" />
+                    </div>
+                    <div className="text-left">
+                      <p className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                        Restore from Backup
+                      </p>
+                      <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                        Import a previously exported file
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight className={`w-4 h-4 ${darkMode ? 'text-white/40' : 'text-gray-400'}`} />
+                </button>
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  accept=".json"
+                  onChange={importBackup}
+                  className="hidden"
+                />
+
+                {/* Info */}
+                <div className={`p-3 rounded-xl ${darkMode ? 'bg-white/5' : 'bg-gray-50'}`}>
+                  <div className="flex items-start gap-2">
+                    <FileJson className={`w-4 h-4 mt-0.5 ${darkMode ? 'text-white/40' : 'text-gray-400'}`} />
+                    <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      Backups include your complete schedule, weekly goals, theme preferences, and notification settings.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setShowBackupModal(false)}
+                  className={`w-full mt-4 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    darkMode
+                      ? 'bg-white/10 hover:bg-white/20 text-white/70'
+                      : 'bg-gray-200 hover:bg-gray-300 text-gray-600'
+                  }`}
+                >
+                  Close
+                </button>
+              </div>
+            </GlassCard>
+          </div>
+        )}
+
+        {/* ===================================== */}
+        {/* FOCUS MODE PANEL */}
+        {/* ===================================== */}
+        {focusMode && (
+          <div className="fixed bottom-24 left-4 right-4 z-40 max-w-md mx-auto animate-slide-up">
+            <GlassCard darkMode={darkMode} glow glowColor={focusType === 'work' ? theme.primary : '#22c55e'}>
+              <div className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <div
+                      className={`w-3 h-3 rounded-full animate-pulse`}
+                      style={{ backgroundColor: focusType === 'work' ? theme.primary : '#22c55e' }}
+                    />
+                    <span className={`text-xs font-medium uppercase tracking-wide ${
+                      darkMode ? 'text-white/60' : 'text-gray-500'
+                    }`}>
+                      {focusType === 'work' ? 'Focus Time' : 'Break Time'}
+                    </span>
+                    {pomodoroCount > 0 && (
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${
+                        darkMode ? 'bg-white/10 text-white/50' : 'bg-gray-100 text-gray-500'
+                      }`}>
+                        {pomodoroCount} completed
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setFocusSoundEnabled(!focusSoundEnabled)}
+                      className={`p-1.5 rounded-lg transition-all ${
+                        darkMode ? 'hover:bg-white/10' : 'hover:bg-gray-100'
+                      }`}
+                      title={focusSoundEnabled ? 'Sound on' : 'Sound off'}
+                    >
+                      {focusSoundEnabled ? (
+                        <Volume2 className={`w-4 h-4 ${darkMode ? 'text-white/50' : 'text-gray-400'}`} />
+                      ) : (
+                        <VolumeX className={`w-4 h-4 ${darkMode ? 'text-white/30' : 'text-gray-300'}`} />
+                      )}
+                    </button>
+                    <button
+                      onClick={stopFocusMode}
+                      className={`p-1.5 rounded-lg transition-all ${
+                        darkMode ? 'hover:bg-white/10' : 'hover:bg-gray-100'
+                      }`}
+                      title="Stop focus mode"
+                    >
+                      <X className={`w-4 h-4 ${darkMode ? 'text-white/50' : 'text-gray-400'}`} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Timer Display */}
+                <div className="text-center mb-4">
+                  <div
+                    className="text-5xl font-bold tracking-tight"
+                    style={{ color: focusType === 'work' ? theme.primary : '#22c55e' }}
+                  >
+                    {formatFocusTime(focusTimeRemaining)}
+                  </div>
+                  {focusActivity && (
+                    <p className={`text-sm mt-2 truncate ${darkMode ? 'text-white/60' : 'text-gray-500'}`}>
+                      {focusActivity.activity}
+                    </p>
+                  )}
+                </div>
+
+                {/* Progress Bar */}
+                <div className={`h-2 rounded-full overflow-hidden mb-4 ${darkMode ? 'bg-white/10' : 'bg-gray-200'}`}>
+                  <div
+                    className="h-full rounded-full transition-all duration-1000"
+                    style={{
+                      width: `${((focusType === 'work' ? pomodoroSettings.workDuration * 60 : (pomodoroCount % pomodoroSettings.longBreakInterval === 0 ? pomodoroSettings.longBreak : pomodoroSettings.shortBreak) * 60) - focusTimeRemaining) / (focusType === 'work' ? pomodoroSettings.workDuration * 60 : (pomodoroCount % pomodoroSettings.longBreakInterval === 0 ? pomodoroSettings.longBreak : pomodoroSettings.shortBreak) * 60) * 100}%`,
+                      backgroundColor: focusType === 'work' ? theme.primary : '#22c55e'
+                    }}
+                  />
+                </div>
+
+                {/* Controls */}
+                <div className="flex items-center justify-center gap-3">
+                  <button
+                    onClick={() => setFocusPaused(!focusPaused)}
+                    className="p-3 rounded-xl text-white shadow-lg transition-all hover:scale-105"
+                    style={{
+                      background: focusType === 'work'
+                        ? `linear-gradient(to right, ${theme.primary}, ${theme.accent})`
+                        : 'linear-gradient(to right, #22c55e, #16a34a)'
+                    }}
+                  >
+                    {focusPaused ? <Play className="w-6 h-6" /> : <Pause className="w-6 h-6" />}
+                  </button>
+                  <button
+                    onClick={skipFocusPhase}
+                    className={`p-3 rounded-xl transition-all ${
+                      darkMode
+                        ? 'bg-white/10 hover:bg-white/20 text-white/70'
+                        : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                    }`}
+                    title={focusType === 'work' ? 'Skip to break' : 'Skip to work'}
+                  >
+                    <SkipForward className="w-5 h-5" />
+                  </button>
+                  <button
+                    onClick={stopFocusMode}
+                    className={`p-3 rounded-xl transition-all ${
+                      darkMode
+                        ? 'bg-red-500/20 hover:bg-red-500/30 text-red-400'
+                        : 'bg-red-100 hover:bg-red-200 text-red-600'
+                    }`}
+                    title="Stop"
+                  >
+                    <Square className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+            </GlassCard>
+          </div>
+        )}
+
+        {/* ===================================== */}
+        {/* KEYBOARD SHORTCUTS HELP */}
+        {/* ===================================== */}
+        {showKeyboardHelp && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+            <GlassCard darkMode={darkMode} className="w-full max-w-lg animate-scale-in max-h-[80vh] overflow-y-auto">
+              <div className="p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className={`font-bold flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                    <Keyboard className="w-5 h-5" style={{ color: theme.primary }} />
+                    Keyboard Shortcuts
+                  </h3>
+                  <button
+                    onClick={() => setShowKeyboardHelp(false)}
+                    className={`p-1.5 rounded-lg transition-all ${
+                      darkMode ? 'hover:bg-white/10' : 'hover:bg-gray-100'
+                    }`}
+                  >
+                    <X className={`w-4 h-4 ${darkMode ? 'text-white/50' : 'text-gray-400'}`} />
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  {/* Navigation */}
+                  <div>
+                    <p className={`text-xs font-medium mb-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      NAVIGATION
+                    </p>
+                    <div className="space-y-1">
+                      {[
+                        { keys: ['←', 'H'], desc: 'Previous day' },
+                        { keys: ['→', 'L'], desc: 'Next day' },
+                        { keys: ['T'], desc: 'Go to today' },
+                        { keys: ['1'], desc: 'Schedule view' },
+                        { keys: ['2'], desc: 'Dashboard view' },
+                        { keys: ['3'], desc: 'Settings view' },
+                      ].map(({ keys, desc }) => (
+                        <div key={desc} className="flex items-center justify-between">
+                          <span className={`text-sm ${darkMode ? 'text-white/70' : 'text-gray-600'}`}>{desc}</span>
+                          <div className="flex gap-1">
+                            {keys.map(k => (
+                              <kbd key={k} className={`px-2 py-1 rounded text-xs font-mono ${
+                                darkMode ? 'bg-white/10 text-white/80' : 'bg-gray-100 text-gray-700'
+                              }`}>
+                                {k}
+                              </kbd>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div>
+                    <p className={`text-xs font-medium mb-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      ACTIONS
+                    </p>
+                    <div className="space-y-1">
+                      {[
+                        { keys: ['N'], desc: 'New activity' },
+                        { keys: ['Q'], desc: 'Quick add templates' },
+                        { keys: ['F'], desc: 'Start/stop focus mode' },
+                        { keys: ['Space'], desc: 'Pause/resume focus (when active)' },
+                        { keys: ['Esc'], desc: 'Close modal / Cancel edit' },
+                      ].map(({ keys, desc }) => (
+                        <div key={desc} className="flex items-center justify-between">
+                          <span className={`text-sm ${darkMode ? 'text-white/70' : 'text-gray-600'}`}>{desc}</span>
+                          <div className="flex gap-1">
+                            {keys.map(k => (
+                              <kbd key={k} className={`px-2 py-1 rounded text-xs font-mono ${
+                                darkMode ? 'bg-white/10 text-white/80' : 'bg-gray-100 text-gray-700'
+                              }`}>
+                                {k}
+                              </kbd>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Edit */}
+                  <div>
+                    <p className={`text-xs font-medium mb-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      EDIT
+                    </p>
+                    <div className="space-y-1">
+                      {[
+                        { keys: ['Ctrl', 'Z'], desc: 'Undo' },
+                        { keys: ['Ctrl', 'Shift', 'Z'], desc: 'Redo' },
+                        { keys: ['Ctrl', 'S'], desc: 'Save changes' },
+                        { keys: ['?'], desc: 'Show this help' },
+                      ].map(({ keys, desc }) => (
+                        <div key={desc} className="flex items-center justify-between">
+                          <span className={`text-sm ${darkMode ? 'text-white/70' : 'text-gray-600'}`}>{desc}</span>
+                          <div className="flex gap-1">
+                            {keys.map(k => (
+                              <kbd key={k} className={`px-2 py-1 rounded text-xs font-mono ${
+                                darkMode ? 'bg-white/10 text-white/80' : 'bg-gray-100 text-gray-700'
+                              }`}>
+                                {k}
+                              </kbd>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setShowKeyboardHelp(false)}
+                  className={`w-full mt-4 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    darkMode
+                      ? 'bg-white/10 hover:bg-white/20 text-white/70'
+                      : 'bg-gray-200 hover:bg-gray-300 text-gray-600'
+                  }`}
+                >
+                  Close
+                </button>
+              </div>
+            </GlassCard>
+          </div>
+        )}
+
+        {/* ===================================== */}
+        {/* RECURRING ACTIVITY MODAL */}
+        {/* ===================================== */}
+        {showRecurringModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+            <GlassCard darkMode={darkMode} className="w-full max-w-md animate-scale-in">
+              <div className="p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className={`font-bold flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                    <Repeat className="w-5 h-5" style={{ color: theme.primary }} />
+                    Recurring Activity
+                  </h3>
+                  <button
+                    onClick={() => setShowRecurringModal(null)}
+                    className={`p-1.5 rounded-lg transition-all ${
+                      darkMode ? 'hover:bg-white/10' : 'hover:bg-gray-100'
+                    }`}
+                  >
+                    <X className={`w-4 h-4 ${darkMode ? 'text-white/50' : 'text-gray-400'}`} />
+                  </button>
+                </div>
+
+                <p className={`text-sm mb-4 ${darkMode ? 'text-white/60' : 'text-gray-600'}`}>
+                  Set "{showRecurringModal.activity.substring(0, 30)}..." to repeat on specific days.
+                </p>
+
+                {/* Day Selection */}
+                <div className="mb-4">
+                  <p className={`text-xs font-medium mb-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                    REPEAT ON
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {days.map(day => {
+                      const isSelected = recurringPatterns[showRecurringModal.id]?.days?.includes(day);
+                      const isSourceDay = day === selectedDay;
+                      return (
+                        <button
+                          key={day}
+                          onClick={() => {
+                            const currentPattern = recurringPatterns[showRecurringModal.id] || { days: [], enabled: true };
+                            const newDays = isSelected
+                              ? currentPattern.days.filter(d => d !== day)
+                              : [...currentPattern.days, day];
+                            setRecurringPattern(showRecurringModal.id, { ...currentPattern, days: newDays });
+                          }}
+                          className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                            isSelected
+                              ? 'text-white shadow-md'
+                              : isSourceDay
+                                ? darkMode
+                                  ? 'bg-white/20 text-white/80 ring-2 ring-white/30'
+                                  : 'bg-gray-200 text-gray-700 ring-2 ring-gray-400'
+                                : darkMode
+                                  ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                                  : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                          }`}
+                          style={isSelected ? { background: theme.primary } : {}}
+                        >
+                          {day.slice(0, 3)}
+                          {isSourceDay && <span className="ml-1 text-xs opacity-60">(source)</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Quick Select */}
+                <div className="flex flex-wrap gap-2 mb-4">
+                  <button
+                    onClick={() => {
+                      setRecurringPattern(showRecurringModal.id, {
+                        days: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+                        enabled: true
+                      });
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                      darkMode
+                        ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                        : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                    }`}
+                  >
+                    Weekdays
+                  </button>
+                  <button
+                    onClick={() => {
+                      setRecurringPattern(showRecurringModal.id, {
+                        days: ['Saturday', 'Sunday'],
+                        enabled: true
+                      });
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                      darkMode
+                        ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                        : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                    }`}
+                  >
+                    Weekends
+                  </button>
+                  <button
+                    onClick={() => {
+                      setRecurringPattern(showRecurringModal.id, { days: [...days], enabled: true });
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                      darkMode
+                        ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                        : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                    }`}
+                  >
+                    Every Day
+                  </button>
+                  <button
+                    onClick={() => {
+                      setRecurringPattern(showRecurringModal.id, null);
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                      darkMode
+                        ? 'bg-red-500/20 hover:bg-red-500/30 text-red-400'
+                        : 'bg-red-100 hover:bg-red-200 text-red-600'
+                    }`}
+                  >
+                    Clear
+                  </button>
+                </div>
+
+                {/* Apply Button */}
+                {recurringPatterns[showRecurringModal.id]?.days?.length > 0 && (
+                  <button
+                    onClick={() => {
+                      applyRecurringPattern(showRecurringModal, selectedDay);
+                      setShowRecurringModal(null);
+                      setSwipedItemId(null);
+                    }}
+                    className="w-full mb-3 px-4 py-3 rounded-xl text-sm font-medium text-white shadow-lg transition-all hover:scale-[1.02]"
+                    style={{
+                      background: `linear-gradient(to right, ${theme.primary}, ${theme.accent})`
+                    }}
+                  >
+                    Apply to Selected Days Now
+                  </button>
+                )}
+
+                <button
+                  onClick={() => { setShowRecurringModal(null); setSwipedItemId(null); }}
+                  className={`w-full px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    darkMode
+                      ? 'bg-white/10 hover:bg-white/20 text-white/70'
+                      : 'bg-gray-200 hover:bg-gray-300 text-gray-600'
+                  }`}
+                >
+                  Close
+                </button>
+              </div>
+            </GlassCard>
+          </div>
+        )}
+
+        {/* ===================================== */}
+        {/* ACTIVITY INSIGHTS MODAL */}
+        {/* ===================================== */}
+        {showInsightsModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+            <GlassCard darkMode={darkMode} className="w-full max-w-lg animate-scale-in max-h-[85vh] overflow-y-auto">
+              <div className="p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className={`font-bold flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                    <LineChart className="w-5 h-5" style={{ color: theme.primary }} />
+                    Activity Insights
+                  </h3>
+                  <button
+                    onClick={() => setShowInsightsModal(false)}
+                    className={`p-1.5 rounded-lg transition-all ${
+                      darkMode ? 'hover:bg-white/10' : 'hover:bg-gray-100'
+                    }`}
+                  >
+                    <X className={`w-4 h-4 ${darkMode ? 'text-white/50' : 'text-gray-400'}`} />
+                  </button>
+                </div>
+
+                {/* Streak & Overview */}
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  <div className={`p-4 rounded-xl ${darkMode ? 'bg-white/5' : 'bg-gray-50'}`}>
+                    <div className="flex items-center gap-2 mb-1">
+                      <Flame className="w-5 h-5 text-orange-500" />
+                      <span className={`text-xs font-medium ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                        STREAK
+                      </span>
+                    </div>
+                    <p className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                      {activityInsights.streak} days
+                    </p>
+                  </div>
+                  <div className={`p-4 rounded-xl ${darkMode ? 'bg-white/5' : 'bg-gray-50'}`}>
+                    <div className="flex items-center gap-2 mb-1">
+                      <TrendingUp className={`w-5 h-5 ${
+                        parseFloat(activityInsights.weekChange) >= 0 ? 'text-green-500' : 'text-red-500'
+                      }`} />
+                      <span className={`text-xs font-medium ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                        VS LAST WEEK
+                      </span>
+                    </div>
+                    <p className={`text-2xl font-bold ${
+                      parseFloat(activityInsights.weekChange) >= 0
+                        ? 'text-green-500'
+                        : 'text-red-500'
+                    }`}>
+                      {parseFloat(activityInsights.weekChange) >= 0 ? '+' : ''}{activityInsights.weekChange}%
+                    </p>
+                  </div>
+                </div>
+
+                {/* This Week Summary */}
+                <div className={`p-4 rounded-xl mb-4 ${darkMode ? 'bg-white/5' : 'bg-gray-50'}`}>
+                  <p className={`text-xs font-medium mb-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                    THIS WEEK
+                  </p>
+                  <p className={`text-lg font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                    {formatDuration(activityInsights.thisWeekTotal)} scheduled
+                  </p>
+                  <p className={`text-xs ${darkMode ? 'text-white/40' : 'text-gray-400'}`}>
+                    Last week: {formatDuration(activityInsights.lastWeekTotal)}
+                  </p>
+                </div>
+
+                {/* Most Productive Day */}
+                {activityInsights.mostProductiveDay && (
+                  <div className={`p-4 rounded-xl mb-4 ${darkMode ? 'bg-white/5' : 'bg-gray-50'}`}>
+                    <p className={`text-xs font-medium mb-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      MOST ACTIVE DAY
+                    </p>
+                    <div className="flex items-center gap-3">
+                      <CalendarDays className="w-8 h-8" style={{ color: theme.primary }} />
+                      <div>
+                        <p className={`font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                          {activityInsights.mostProductiveDay[0]}
+                        </p>
+                        <p className={`text-sm ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                          {formatDuration(activityInsights.mostProductiveDay[1])} average
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Top Activities */}
+                {activityInsights.topActivities.length > 0 && (
+                  <div className="mb-4">
+                    <p className={`text-xs font-medium mb-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      TOP ACTIVITIES
+                    </p>
+                    <div className="space-y-2">
+                      {activityInsights.topActivities.map(([name, count], i) => (
+                        <div
+                          key={name}
+                          className={`flex items-center gap-3 p-3 rounded-xl ${
+                            darkMode ? 'bg-white/5' : 'bg-gray-50'
+                          }`}
+                        >
+                          <span className={`text-lg font-bold w-6 ${darkMode ? 'text-white/30' : 'text-gray-300'}`}>
+                            {i + 1}
+                          </span>
+                          <span className={`flex-1 text-sm truncate ${darkMode ? 'text-white/70' : 'text-gray-600'}`}>
+                            {name}
+                          </span>
+                          <span className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                            {count}x
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Category Breakdown */}
+                {Object.keys(activityInsights.categoryTotals).length > 0 && (
+                  <div className="mb-4">
+                    <p className={`text-xs font-medium mb-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      TIME BY CATEGORY (Last 4 Weeks)
+                    </p>
+                    <div className="space-y-2">
+                      {Object.entries(activityInsights.categoryTotals)
+                        .sort((a, b) => b[1] - a[1])
+                        .slice(0, 6)
+                        .map(([category, minutes]) => {
+                          const catInfo = categories[category];
+                          const maxMins = Math.max(...Object.values(activityInsights.categoryTotals));
+                          const percentage = (minutes / maxMins) * 100;
+                          return (
+                            <div key={category} className="flex items-center gap-3">
+                              <div
+                                className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                                style={{ backgroundColor: `${catInfo?.accent}20` }}
+                              >
+                                {catInfo?.icon && <catInfo.icon className="w-4 h-4" style={{ color: catInfo.accent }} />}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className={`text-sm truncate ${darkMode ? 'text-white/70' : 'text-gray-600'}`}>
+                                    {category}
+                                  </span>
+                                  <span className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                                    {formatDuration(minutes)}
+                                  </span>
+                                </div>
+                                <div className={`h-1.5 rounded-full overflow-hidden ${darkMode ? 'bg-white/10' : 'bg-gray-200'}`}>
+                                  <div
+                                    className="h-full rounded-full transition-all duration-500"
+                                    style={{
+                                      width: `${percentage}%`,
+                                      backgroundColor: catInfo?.accent
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
+
+                {activityInsights.totalTracked === 0 && (
+                  <div className={`text-center py-8 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                    <LineChart className="w-10 h-10 mx-auto mb-3 opacity-50" />
+                    <p className="font-medium mb-1">No data yet</p>
+                    <p className="text-sm opacity-75">
+                      Insights will appear after tracking activities for a few days
+                    </p>
+                  </div>
+                )}
+
+                <button
+                  onClick={() => setShowInsightsModal(false)}
+                  className={`w-full mt-4 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    darkMode
+                      ? 'bg-white/10 hover:bg-white/20 text-white/70'
+                      : 'bg-gray-200 hover:bg-gray-300 text-gray-600'
+                  }`}
+                >
+                  Close
+                </button>
+              </div>
+            </GlassCard>
+          </div>
+        )}
+
+        {/* ===================================== */}
+        {/* PRINT VIEW MODAL */}
+        {/* ===================================== */}
+        {showPrintView && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+            <div className="bg-white w-full max-w-4xl max-h-[90vh] overflow-auto rounded-2xl shadow-2xl animate-scale-in">
+              {/* Print Header */}
+              <div className="sticky top-0 bg-white border-b border-gray-200 p-4 flex items-center justify-between no-print">
+                <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                  <Printer className="w-5 h-5 text-blue-500" />
+                  Print Preview
+                </h3>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => window.print()}
+                    className="px-4 py-2 rounded-xl bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-all flex items-center gap-2"
+                  >
+                    <Printer className="w-4 h-4" />
+                    Print
+                  </button>
+                  <button
+                    onClick={() => setShowPrintView(false)}
+                    className="p-2 rounded-lg hover:bg-gray-100 transition-all"
+                  >
+                    <X className="w-5 h-5 text-gray-500" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Printable Content */}
+              <div className="p-8 print-content" id="print-schedule">
+                <div className="text-center mb-6">
+                  <h1 className="text-2xl font-bold text-gray-900">Weekly Schedule</h1>
+                  <p className="text-gray-500 text-sm mt-1">
+                    Week of {new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                  </p>
+                </div>
+
+                {/* Schedule Grid */}
+                <div className="grid grid-cols-7 gap-2">
+                  {days.map(day => {
+                    const daySchedule = schedule[day] || [];
+                    const isToday = day === days[new Date().getDay() === 0 ? 6 : new Date().getDay() - 1];
+                    return (
+                      <div key={day} className={`border rounded-lg overflow-hidden ${isToday ? 'border-blue-400 border-2' : 'border-gray-200'}`}>
+                        <div className={`p-2 text-center font-bold text-sm ${isToday ? 'bg-blue-50 text-blue-700' : 'bg-gray-50 text-gray-700'}`}>
+                          {day.slice(0, 3)}
+                        </div>
+                        <div className="p-2 min-h-[200px]">
+                          {daySchedule.length === 0 ? (
+                            <p className="text-xs text-gray-400 text-center italic">No activities</p>
+                          ) : (
+                            <div className="space-y-1">
+                              {daySchedule.map((item, idx) => (
+                                <div key={idx} className="text-xs p-1.5 rounded bg-gray-50 border-l-2" style={{ borderLeftColor: categories[item.category]?.accent || '#888' }}>
+                                  <div className="font-medium text-gray-800 truncate">
+                                    {item.emoji} {item.activity.substring(0, 20)}{item.activity.length > 20 ? '...' : ''}
+                                  </div>
+                                  <div className="text-gray-500">
+                                    {item.time} • {item.duration}min
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Statistics Summary */}
+                <div className="mt-6 pt-4 border-t border-gray-200">
+                  <h4 className="font-bold text-gray-700 mb-3">Weekly Summary</h4>
+                  <div className="grid grid-cols-4 gap-4 text-sm">
+                    <div className="bg-gray-50 p-3 rounded-lg">
+                      <p className="text-gray-500 text-xs">Total Activities</p>
+                      <p className="font-bold text-gray-900">{stats.totalActivities}</p>
+                    </div>
+                    <div className="bg-gray-50 p-3 rounded-lg">
+                      <p className="text-gray-500 text-xs">Total Time</p>
+                      <p className="font-bold text-gray-900">{formatDuration(stats.totalTime)}</p>
+                    </div>
+                    <div className="bg-gray-50 p-3 rounded-lg">
+                      <p className="text-gray-500 text-xs">Categories Used</p>
+                      <p className="font-bold text-gray-900">{Object.keys(stats.categoryBreakdown).length}</p>
+                    </div>
+                    <div className="bg-gray-50 p-3 rounded-lg">
+                      <p className="text-gray-500 text-xs">Avg Per Day</p>
+                      <p className="font-bold text-gray-900">{formatDuration(Math.round(stats.totalTime / 7))}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Footer */}
+                <div className="mt-6 pt-4 border-t border-gray-200 text-center text-xs text-gray-400">
+                  Generated from Schedule App • {new Date().toLocaleString()}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ===================================== */}
+        {/* CONFLICT WARNINGS MODAL */}
+        {/* ===================================== */}
+        {scheduleConflicts.length > 0 && showConflicts && view === 'schedule' && (
+          <div className={`fixed bottom-24 left-4 right-4 z-40 max-w-md mx-auto animate-slide-up`}>
+            <GlassCard darkMode={darkMode} glow className="border-2 border-amber-500/50">
+              <div className="p-4">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0">
+                    <AlertTriangle className="w-5 h-5 text-amber-500" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <h4 className={`font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                        Schedule Conflicts ({scheduleConflicts.length})
+                      </h4>
+                      <button
+                        onClick={() => setShowConflicts(false)}
+                        className={`p-1 rounded-lg transition-all ${darkMode ? 'hover:bg-white/10' : 'hover:bg-gray-100'}`}
+                      >
+                        <X className={`w-4 h-4 ${darkMode ? 'text-white/50' : 'text-gray-400'}`} />
+                      </button>
+                    </div>
+                    <p className={`text-sm mt-1 ${darkMode ? 'text-white/60' : 'text-gray-600'}`}>
+                      Overlapping activities detected:
+                    </p>
+                    <div className="mt-2 space-y-2 max-h-32 overflow-y-auto">
+                      {scheduleConflicts.slice(0, 3).map((conflict, i) => (
+                        <div
+                          key={i}
+                          className={`text-xs p-2 rounded-lg cursor-pointer transition-all ${
+                            darkMode ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-50 hover:bg-gray-100'
+                          }`}
+                          onClick={() => setSelectedDay(conflict.day)}
+                        >
+                          <span className="font-medium" style={{ color: theme.primary }}>{conflict.day}:</span>
+                          <span className={darkMode ? 'text-white/70' : 'text-gray-600'}>
+                            {' '}{conflict.activity1.activity.substring(0, 15)}... & {conflict.activity2.activity.substring(0, 15)}...
+                          </span>
+                          <span className="text-amber-500 ml-1">({conflict.overlapMinutes}min overlap)</span>
+                        </div>
+                      ))}
+                      {scheduleConflicts.length > 3 && (
+                        <p className={`text-xs ${darkMode ? 'text-white/40' : 'text-gray-400'}`}>
+                          +{scheduleConflicts.length - 3} more conflicts
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </GlassCard>
+          </div>
+        )}
+
+        {/* ===================================== */}
+        {/* AUTO-SCHEDULER MODAL */}
+        {/* ===================================== */}
+        {showAutoScheduler && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+            <GlassCard darkMode={darkMode} className="w-full max-w-lg animate-scale-in max-h-[90vh] overflow-y-auto">
+              <div className="p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className={`font-bold flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                    <Wand2 className="w-5 h-5" style={{ color: theme.primary }} />
+                    Smart Scheduler
+                  </h3>
+                  <button
+                    onClick={() => setShowAutoScheduler(false)}
+                    className={`p-1.5 rounded-lg transition-all ${darkMode ? 'hover:bg-white/10' : 'hover:bg-gray-100'}`}
+                  >
+                    <X className={`w-4 h-4 ${darkMode ? 'text-white/50' : 'text-gray-400'}`} />
+                  </button>
+                </div>
+
+                <p className={`text-sm mb-4 ${darkMode ? 'text-white/60' : 'text-gray-600'}`}>
+                  Tell me what you want to schedule and I'll find the best time slots.
+                </p>
+
+                {/* Activity Name */}
+                <div className="mb-4">
+                  <label className={`text-xs font-medium mb-1.5 block ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                    ACTIVITY NAME
+                  </label>
+                  <input
+                    type="text"
+                    value={autoSchedulerRequest.activityName}
+                    onChange={(e) => setAutoSchedulerRequest(prev => ({ ...prev, activityName: e.target.value }))}
+                    placeholder="e.g., Morning workout, Team meeting..."
+                    className={`w-full px-4 py-3 rounded-xl text-sm transition-all ${
+                      darkMode
+                        ? 'bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-white/30'
+                        : 'bg-gray-50 border border-gray-200 text-gray-900 placeholder-gray-400 focus:border-gray-400'
+                    } focus:outline-none`}
+                  />
+                </div>
+
+                {/* Duration & Category */}
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  <div>
+                    <label className={`text-xs font-medium mb-1.5 block ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      DURATION
+                    </label>
+                    <select
+                      value={autoSchedulerRequest.duration}
+                      onChange={(e) => setAutoSchedulerRequest(prev => ({ ...prev, duration: parseInt(e.target.value) }))}
+                      className={`w-full px-4 py-3 rounded-xl text-sm transition-all ${
+                        darkMode
+                          ? 'bg-white/5 border border-white/10 text-white'
+                          : 'bg-gray-50 border border-gray-200 text-gray-900'
+                      } focus:outline-none`}
+                    >
+                      <option value={15}>15 min</option>
+                      <option value={30}>30 min</option>
+                      <option value={45}>45 min</option>
+                      <option value={60}>1 hour</option>
+                      <option value={90}>1.5 hours</option>
+                      <option value={120}>2 hours</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className={`text-xs font-medium mb-1.5 block ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      CATEGORY
+                    </label>
+                    <select
+                      value={autoSchedulerRequest.category}
+                      onChange={(e) => setAutoSchedulerRequest(prev => ({ ...prev, category: e.target.value }))}
+                      className={`w-full px-4 py-3 rounded-xl text-sm transition-all ${
+                        darkMode
+                          ? 'bg-white/5 border border-white/10 text-white'
+                          : 'bg-gray-50 border border-gray-200 text-gray-900'
+                      } focus:outline-none`}
+                    >
+                      {Object.keys(categories).map(cat => (
+                        <option key={cat} value={cat}>{cat}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Preferred Time */}
+                <div className="mb-4">
+                  <label className={`text-xs font-medium mb-1.5 block ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                    PREFERRED TIME
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      { value: 'any', label: 'Any Time', icon: Clock3 },
+                      { value: 'morning', label: 'Morning', icon: Sun },
+                      { value: 'afternoon', label: 'Afternoon', icon: Clock },
+                      { value: 'evening', label: 'Evening', icon: Moon },
+                    ].map(({ value, label, icon: Icon }) => (
+                      <button
+                        key={value}
+                        onClick={() => setAutoSchedulerRequest(prev => ({ ...prev, preferredTimeRange: value }))}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium transition-all ${
+                          autoSchedulerRequest.preferredTimeRange === value
+                            ? 'text-white shadow-md'
+                            : darkMode
+                              ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                              : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                        }`}
+                        style={autoSchedulerRequest.preferredTimeRange === value ? { background: theme.primary } : {}}
+                      >
+                        <Icon className="w-4 h-4" />
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Preferred Days */}
+                <div className="mb-4">
+                  <label className={`text-xs font-medium mb-1.5 block ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                    PREFERRED DAYS (leave empty for any)
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {days.map(day => {
+                      const isSelected = autoSchedulerRequest.preferredDays.includes(day);
+                      return (
+                        <button
+                          key={day}
+                          onClick={() => {
+                            setAutoSchedulerRequest(prev => ({
+                              ...prev,
+                              preferredDays: isSelected
+                                ? prev.preferredDays.filter(d => d !== day)
+                                : [...prev.preferredDays, day]
+                            }));
+                          }}
+                          className={`px-3 py-2 rounded-xl text-sm font-medium transition-all ${
+                            isSelected
+                              ? 'text-white shadow-md'
+                              : darkMode
+                                ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                                : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                          }`}
+                          style={isSelected ? { background: theme.primary } : {}}
+                        >
+                          {day.slice(0, 3)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Suggestions */}
+                {autoSchedulerRequest.activityName && (
+                  <div className="mb-4">
+                    <label className={`text-xs font-medium mb-2 block ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      SUGGESTED TIME SLOTS
+                    </label>
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {findAvailableSlots(
+                        autoSchedulerRequest.duration,
+                        autoSchedulerRequest.preferredDays,
+                        autoSchedulerRequest.preferredTimeRange
+                      ).slice(0, 6).map((slot, i) => (
+                        <button
+                          key={i}
+                          onClick={() => addFromSuggestion(
+                            slot,
+                            autoSchedulerRequest.activityName,
+                            autoSchedulerRequest.duration,
+                            autoSchedulerRequest.category
+                          )}
+                          className={`w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all ${
+                            darkMode
+                              ? 'bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20'
+                              : 'bg-gray-50 hover:bg-gray-100 border border-gray-200 hover:border-gray-300'
+                          }`}
+                        >
+                          <div
+                            className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+                            style={{ backgroundColor: `${theme.primary}20` }}
+                          >
+                            <Clock3 className="w-5 h-5" style={{ color: theme.primary }} />
+                          </div>
+                          <div className="flex-1">
+                            <p className={`font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                              {slot.day} at {slot.time}
+                            </p>
+                            <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                              {autoSchedulerRequest.duration} min • Score: {slot.score}
+                            </p>
+                          </div>
+                          <Plus className={`w-5 h-5 ${darkMode ? 'text-white/40' : 'text-gray-400'}`} />
+                        </button>
+                      ))}
+                      {findAvailableSlots(
+                        autoSchedulerRequest.duration,
+                        autoSchedulerRequest.preferredDays,
+                        autoSchedulerRequest.preferredTimeRange
+                      ).length === 0 && (
+                        <p className={`text-center py-4 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                          No available slots found. Try adjusting your preferences.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  onClick={() => setShowAutoScheduler(false)}
+                  className={`w-full px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    darkMode
+                      ? 'bg-white/10 hover:bg-white/20 text-white/70'
+                      : 'bg-gray-200 hover:bg-gray-300 text-gray-600'
+                  }`}
+                >
+                  Close
+                </button>
+              </div>
+            </GlassCard>
+          </div>
+        )}
+
+        {/* ===================================== */}
+        {/* WEEKLY REVIEW MODAL */}
+        {/* ===================================== */}
+        {showWeeklyReview && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+            <GlassCard darkMode={darkMode} className="w-full max-w-lg animate-scale-in max-h-[90vh] overflow-y-auto">
+              <div className="p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className={`font-bold flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                    <BookOpen className="w-5 h-5" style={{ color: theme.primary }} />
+                    Weekly Review
+                  </h3>
+                  <button
+                    onClick={() => setShowWeeklyReview(false)}
+                    className={`p-1.5 rounded-lg transition-all ${darkMode ? 'hover:bg-white/10' : 'hover:bg-gray-100'}`}
+                  >
+                    <X className={`w-4 h-4 ${darkMode ? 'text-white/50' : 'text-gray-400'}`} />
+                  </button>
+                </div>
+
+                {/* Week Stats Summary */}
+                <div className={`p-4 rounded-xl mb-4 ${darkMode ? 'bg-white/5' : 'bg-gray-50'}`}>
+                  <div className="flex items-center gap-3 mb-3">
+                    <Trophy className="w-6 h-6 text-amber-500" />
+                    <div>
+                      <p className={`font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                        Week Summary
+                      </p>
+                      <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                        {getCurrentWeekKey()}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="text-center">
+                      <p className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                        {stats.totalActivities}
+                      </p>
+                      <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>Activities</p>
+                    </div>
+                    <div className="text-center">
+                      <p className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                        {formatDuration(stats.totalTime)}
+                      </p>
+                      <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>Total Time</p>
+                    </div>
+                    <div className="text-center">
+                      <p className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                        {Object.keys(stats.categoryBreakdown).length}
+                      </p>
+                      <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>Categories</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Reflection Prompts */}
+                <div className="space-y-4 mb-4">
+                  <div>
+                    <label className={`text-xs font-medium mb-1.5 flex items-center gap-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      <Star className="w-3 h-3 text-green-500" />
+                      WHAT WENT WELL THIS WEEK?
+                    </label>
+                    <textarea
+                      value={currentReflection.wentWell}
+                      onChange={(e) => setCurrentReflection(prev => ({ ...prev, wentWell: e.target.value }))}
+                      placeholder="Celebrate your wins..."
+                      rows={2}
+                      className={`w-full px-4 py-3 rounded-xl text-sm transition-all resize-none ${
+                        darkMode
+                          ? 'bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-white/30'
+                          : 'bg-gray-50 border border-gray-200 text-gray-900 placeholder-gray-400 focus:border-gray-400'
+                      } focus:outline-none`}
+                    />
+                  </div>
+
+                  <div>
+                    <label className={`text-xs font-medium mb-1.5 flex items-center gap-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      <PenLine className="w-3 h-3 text-amber-500" />
+                      WHAT COULD BE IMPROVED?
+                    </label>
+                    <textarea
+                      value={currentReflection.toImprove}
+                      onChange={(e) => setCurrentReflection(prev => ({ ...prev, toImprove: e.target.value }))}
+                      placeholder="Areas for growth..."
+                      rows={2}
+                      className={`w-full px-4 py-3 rounded-xl text-sm transition-all resize-none ${
+                        darkMode
+                          ? 'bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-white/30'
+                          : 'bg-gray-50 border border-gray-200 text-gray-900 placeholder-gray-400 focus:border-gray-400'
+                      } focus:outline-none`}
+                    />
+                  </div>
+
+                  <div>
+                    <label className={`text-xs font-medium mb-1.5 flex items-center gap-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      <Target className="w-3 h-3 text-blue-500" />
+                      INTENTIONS FOR NEXT WEEK
+                    </label>
+                    <textarea
+                      value={currentReflection.nextWeekIntentions}
+                      onChange={(e) => setCurrentReflection(prev => ({ ...prev, nextWeekIntentions: e.target.value }))}
+                      placeholder="What do you want to focus on?"
+                      rows={2}
+                      className={`w-full px-4 py-3 rounded-xl text-sm transition-all resize-none ${
+                        darkMode
+                          ? 'bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-white/30'
+                          : 'bg-gray-50 border border-gray-200 text-gray-900 placeholder-gray-400 focus:border-gray-400'
+                      } focus:outline-none`}
+                    />
+                  </div>
+                </div>
+
+                {/* Past Reflections */}
+                {Object.keys(weeklyReflections).length > 0 && (
+                  <div className="mb-4">
+                    <p className={`text-xs font-medium mb-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      PAST REFLECTIONS
+                    </p>
+                    <div className="space-y-2 max-h-32 overflow-y-auto">
+                      {Object.entries(weeklyReflections)
+                        .sort((a, b) => b[0].localeCompare(a[0]))
+                        .slice(0, 4)
+                        .map(([week, reflection]) => (
+                          <div
+                            key={week}
+                            className={`p-3 rounded-xl text-sm ${darkMode ? 'bg-white/5' : 'bg-gray-50'}`}
+                          >
+                            <p className={`font-medium ${darkMode ? 'text-white/70' : 'text-gray-700'}`}>{week}</p>
+                            {reflection.wentWell && (
+                              <p className={`text-xs mt-1 ${darkMode ? 'text-white/40' : 'text-gray-500'}`}>
+                                ✓ {reflection.wentWell.substring(0, 50)}...
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      saveWeeklyReflection();
+                      setShowWeeklyReview(false);
+                    }}
+                    className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium text-white transition-all"
+                    style={{ background: `linear-gradient(to right, ${theme.primary}, ${theme.accent})` }}
+                  >
+                    Save Reflection
+                  </button>
+                  <button
+                    onClick={() => setShowWeeklyReview(false)}
+                    className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                      darkMode
+                        ? 'bg-white/10 hover:bg-white/20 text-white/70'
+                        : 'bg-gray-200 hover:bg-gray-300 text-gray-600'
+                    }`}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </GlassCard>
+          </div>
+        )}
+
+        {/* ===================================== */}
+        {/* TIME BUDGET SETTINGS MODAL */}
+        {/* ===================================== */}
+        {showBudgetSettings && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+            <GlassCard darkMode={darkMode} className="w-full max-w-lg animate-scale-in max-h-[90vh] overflow-y-auto">
+              <div className="p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className={`font-bold flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                    <Gauge className="w-5 h-5" style={{ color: theme.primary }} />
+                    Time Budgets
+                  </h3>
+                  <button
+                    onClick={() => setShowBudgetSettings(false)}
+                    className={`p-1.5 rounded-lg transition-all ${darkMode ? 'hover:bg-white/10' : 'hover:bg-gray-100'}`}
+                  >
+                    <X className={`w-4 h-4 ${darkMode ? 'text-white/50' : 'text-gray-400'}`} />
+                  </button>
+                </div>
+
+                <p className={`text-sm mb-4 ${darkMode ? 'text-white/60' : 'text-gray-600'}`}>
+                  Set weekly time limits for each category to maintain balance.
+                </p>
+
+                {/* Budget List */}
+                <div className="space-y-3 mb-4">
+                  {Object.keys(categories).map(category => {
+                    const catInfo = categories[category];
+                    const budget = categoryBudgets[category] || 0;
+                    const spent = categoryTimeSpent[category] || 0;
+                    const percentage = budget > 0 ? Math.min(100, Math.round((spent / budget) * 100)) : 0;
+                    const isOver = spent > budget && budget > 0;
+
+                    return (
+                      <div key={category} className={`p-4 rounded-xl ${darkMode ? 'bg-white/5' : 'bg-gray-50'}`}>
+                        <div className="flex items-center gap-3 mb-2">
+                          <div
+                            className="w-8 h-8 rounded-lg flex items-center justify-center"
+                            style={{ backgroundColor: `${catInfo.accent}20` }}
+                          >
+                            <catInfo.icon className="w-4 h-4" style={{ color: catInfo.accent }} />
+                          </div>
+                          <span className={`flex-1 font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                            {category}
+                          </span>
+                          <span className={`text-sm ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                            {formatDuration(spent)} used
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="range"
+                            min="0"
+                            max="2400"
+                            step="30"
+                            value={budget}
+                            onChange={(e) => setCategoryBudget(category, parseInt(e.target.value))}
+                            className="flex-1 h-2 rounded-full appearance-none cursor-pointer"
+                            style={{
+                              background: `linear-gradient(to right, ${catInfo.accent} ${(budget / 2400) * 100}%, ${darkMode ? 'rgba(255,255,255,0.1)' : '#e5e7eb'} ${(budget / 2400) * 100}%)`
+                            }}
+                          />
+                          <span className={`text-sm font-medium w-16 text-right ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                            {budget > 0 ? formatDuration(budget) : 'No limit'}
+                          </span>
+                        </div>
+
+                        {budget > 0 && (
+                          <div className="mt-2">
+                            <div className={`h-1.5 rounded-full overflow-hidden ${darkMode ? 'bg-white/10' : 'bg-gray-200'}`}>
+                              <div
+                                className={`h-full rounded-full transition-all duration-500 ${isOver ? 'bg-red-500' : ''}`}
+                                style={{
+                                  width: `${Math.min(100, percentage)}%`,
+                                  backgroundColor: isOver ? undefined : catInfo.accent
+                                }}
+                              />
+                            </div>
+                            <p className={`text-xs mt-1 ${isOver ? 'text-red-500' : darkMode ? 'text-white/40' : 'text-gray-400'}`}>
+                              {isOver ? `Over by ${formatDuration(spent - budget)}` : `${percentage}% used, ${formatDuration(budget - spent)} remaining`}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <button
+                  onClick={() => setShowBudgetSettings(false)}
+                  className={`w-full px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    darkMode
+                      ? 'bg-white/10 hover:bg-white/20 text-white/70'
+                      : 'bg-gray-200 hover:bg-gray-300 text-gray-600'
+                  }`}
+                >
+                  Done
+                </button>
+              </div>
+            </GlassCard>
+          </div>
+        )}
+
+        {/* ===================================== */}
+        {/* TEMPLATE LIBRARY MODAL */}
+        {/* ===================================== */}
+        {showTemplateLibrary && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+            <GlassCard darkMode={darkMode} className="w-full max-w-lg animate-scale-in max-h-[90vh] overflow-y-auto">
+              <div className="p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className={`font-bold flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                    <Library className="w-5 h-5" style={{ color: theme.primary }} />
+                    Activity Templates
+                  </h3>
+                  <button
+                    onClick={() => setShowTemplateLibrary(false)}
+                    className={`p-1.5 rounded-lg transition-all ${darkMode ? 'hover:bg-white/10' : 'hover:bg-gray-100'}`}
+                  >
+                    <X className={`w-4 h-4 ${darkMode ? 'text-white/50' : 'text-gray-400'}`} />
+                  </button>
+                </div>
+
+                <p className={`text-sm mb-4 ${darkMode ? 'text-white/60' : 'text-gray-600'}`}>
+                  Save and reuse your favorite activity configurations.
+                </p>
+
+                {/* Default Templates */}
+                <div className="mb-4">
+                  <p className={`text-xs font-medium mb-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                    QUICK ADD
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {activityTemplates.slice(0, 6).map((template, i) => (
+                      <button
+                        key={i}
+                        onClick={() => {
+                          addFromTemplate(template);
+                          setShowTemplateLibrary(false);
+                        }}
+                        className={`flex items-center gap-2 p-3 rounded-xl text-left transition-all ${
+                          darkMode
+                            ? 'bg-white/5 hover:bg-white/10'
+                            : 'bg-gray-50 hover:bg-gray-100'
+                        }`}
+                      >
+                        <span className="text-xl">{template.emoji}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-sm font-medium truncate ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                            {template.name}
+                          </p>
+                          <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                            {template.duration}min
+                          </p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Custom Templates */}
+                <div className="mb-4">
+                  <p className={`text-xs font-medium mb-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                    MY TEMPLATES ({customTemplates.length})
+                  </p>
+                  {customTemplates.length === 0 ? (
+                    <div className={`text-center py-6 ${darkMode ? 'text-white/40' : 'text-gray-400'}`}>
+                      <BookMarked className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                      <p className="text-sm">No custom templates yet</p>
+                      <p className="text-xs mt-1">Save activities as templates from the schedule</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {customTemplates.map(template => (
+                        <div
+                          key={template.id}
+                          className={`flex items-center gap-3 p-3 rounded-xl ${
+                            darkMode ? 'bg-white/5' : 'bg-gray-50'
+                          }`}
+                        >
+                          <span className="text-xl">{template.emoji}</span>
+                          <div className="flex-1 min-w-0">
+                            <p className={`text-sm font-medium truncate ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                              {template.name}
+                            </p>
+                            <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                              {template.category} • {template.duration}min
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => {
+                              addFromTemplate(template);
+                              setShowTemplateLibrary(false);
+                            }}
+                            className={`p-2 rounded-lg transition-all ${
+                              darkMode ? 'hover:bg-white/10' : 'hover:bg-gray-200'
+                            }`}
+                            title="Add to schedule"
+                          >
+                            <Plus className={`w-4 h-4 ${darkMode ? 'text-white/60' : 'text-gray-600'}`} />
+                          </button>
+                          <button
+                            onClick={() => deleteTemplate(template.id)}
+                            className={`p-2 rounded-lg transition-all hover:bg-red-500/20`}
+                            title="Delete template"
+                          >
+                            <Trash2 className="w-4 h-4 text-red-500" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  onClick={() => setShowTemplateLibrary(false)}
+                  className={`w-full px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    darkMode
+                      ? 'bg-white/10 hover:bg-white/20 text-white/70'
+                      : 'bg-gray-200 hover:bg-gray-300 text-gray-600'
+                  }`}
+                >
+                  Close
+                </button>
+              </div>
+            </GlassCard>
+          </div>
+        )}
+
+        {/* ===================================== */}
+        {/* SAVE AS TEMPLATE MODAL */}
+        {/* ===================================== */}
+        {showSaveTemplate && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+            <GlassCard darkMode={darkMode} className="w-full max-w-sm animate-scale-in">
+              <div className="p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className={`font-bold flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                    <FolderPlus className="w-5 h-5" style={{ color: theme.primary }} />
+                    Save as Template
+                  </h3>
+                  <button
+                    onClick={() => {
+                      setShowSaveTemplate(null);
+                      setNewTemplateName('');
+                    }}
+                    className={`p-1.5 rounded-lg transition-all ${darkMode ? 'hover:bg-white/10' : 'hover:bg-gray-100'}`}
+                  >
+                    <X className={`w-4 h-4 ${darkMode ? 'text-white/50' : 'text-gray-400'}`} />
+                  </button>
+                </div>
+
+                <div className={`p-3 rounded-xl mb-4 ${darkMode ? 'bg-white/5' : 'bg-gray-50'}`}>
+                  <div className="flex items-center gap-3">
+                    <span className="text-2xl">{showSaveTemplate.emoji}</span>
+                    <div>
+                      <p className={`font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                        {showSaveTemplate.activity}
+                      </p>
+                      <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                        {showSaveTemplate.category} • {showSaveTemplate.duration}min
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mb-4">
+                  <label className={`text-xs font-medium mb-1.5 block ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                    TEMPLATE NAME
+                  </label>
+                  <input
+                    type="text"
+                    value={newTemplateName}
+                    onChange={(e) => setNewTemplateName(e.target.value)}
+                    placeholder={showSaveTemplate.activity}
+                    className={`w-full px-4 py-3 rounded-xl text-sm transition-all ${
+                      darkMode
+                        ? 'bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-white/30'
+                        : 'bg-gray-50 border border-gray-200 text-gray-900 placeholder-gray-400 focus:border-gray-400'
+                    } focus:outline-none`}
+                  />
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      saveAsTemplate(showSaveTemplate, newTemplateName || showSaveTemplate.activity);
+                    }}
+                    className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium text-white transition-all"
+                    style={{ background: `linear-gradient(to right, ${theme.primary}, ${theme.accent})` }}
+                  >
+                    Save Template
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowSaveTemplate(null);
+                      setNewTemplateName('');
+                    }}
+                    className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                      darkMode
+                        ? 'bg-white/10 hover:bg-white/20 text-white/70'
+                        : 'bg-gray-200 hover:bg-gray-300 text-gray-600'
+                    }`}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </GlassCard>
+          </div>
+        )}
+
+        {/* Budget Warning Toast */}
+        {budgetWarnings.length > 0 && view === 'schedule' && (
+          <div className={`fixed bottom-24 right-4 z-40 animate-slide-up`}>
+            <GlassCard darkMode={darkMode} className="max-w-xs">
+              <div className="p-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <Gauge className={`w-4 h-4 ${budgetWarnings[0].isOver ? 'text-red-500' : 'text-amber-500'}`} />
+                  <span className={`text-xs font-medium ${darkMode ? 'text-white/70' : 'text-gray-700'}`}>
+                    Budget {budgetWarnings[0].isOver ? 'Exceeded' : 'Warning'}
+                  </span>
+                </div>
+                {budgetWarnings.slice(0, 2).map(warning => (
+                  <div key={warning.category} className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                    <span className="font-medium">{warning.category}:</span> {warning.percentage}%
+                    {warning.isOver && <span className="text-red-500 ml-1">(over!)</span>}
+                  </div>
+                ))}
+                <button
+                  onClick={() => setShowBudgetSettings(true)}
+                  className="text-xs mt-2 underline"
+                  style={{ color: theme.primary }}
+                >
+                  Manage budgets
+                </button>
+              </div>
+            </GlassCard>
+          </div>
+        )}
+
+        {/* ===================================== */}
         {/* SETTINGS VIEW */}
         {/* ===================================== */}
         {view === 'settings' && (
           <>
+          {/* Notifications Settings */}
+          <GlassCard darkMode={darkMode} className="mb-4">
+            <div className="p-5">
+              <h3 className={`text-lg font-bold mb-4 flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                <Bell className="w-5 h-5" style={{ color: theme.primary }} />
+                Notifications
+              </h3>
+
+              {/* Notification Permission Status */}
+              <div className={`flex items-center justify-between p-4 rounded-xl mb-4 ${
+                darkMode ? 'bg-white/5' : 'bg-gray-50'
+              }`}>
+                <div className="flex items-center gap-3">
+                  {notificationsEnabled && Notification.permission === 'granted' ? (
+                    <div className="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center">
+                      <Bell className="w-5 h-5 text-green-500" />
+                    </div>
+                  ) : (
+                    <div className="w-10 h-10 rounded-full bg-gray-500/20 flex items-center justify-center">
+                      <BellOff className={`w-5 h-5 ${darkMode ? 'text-white/40' : 'text-gray-400'}`} />
+                    </div>
+                  )}
+                  <div>
+                    <p className={`font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                      {notificationsEnabled && Notification.permission === 'granted'
+                        ? 'Notifications Enabled'
+                        : 'Notifications Disabled'}
+                    </p>
+                    <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      Get reminded before activities start
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    if (notificationsEnabled) {
+                      setNotificationsEnabled(false);
+                    } else {
+                      requestNotificationPermission();
+                    }
+                  }}
+                  className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${
+                    notificationsEnabled
+                      ? darkMode
+                        ? 'bg-red-500/20 hover:bg-red-500/30 text-red-400'
+                        : 'bg-red-100 hover:bg-red-200 text-red-700'
+                      : 'text-white shadow-lg'
+                  }`}
+                  style={!notificationsEnabled ? {
+                    background: `linear-gradient(to right, ${theme.primary}, ${theme.accent})`
+                  } : {}}
+                >
+                  {notificationsEnabled ? 'Disable' : 'Enable'}
+                </button>
+              </div>
+
+              {/* Notification Timing */}
+              {notificationsEnabled && (
+                <div className="space-y-3 animate-fade-in">
+                  <p className={`text-sm font-medium ${darkMode ? 'text-white/70' : 'text-gray-600'}`}>
+                    Notify me before activity starts:
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {[1, 5, 10, 15, 30].map(mins => (
+                      <button
+                        key={mins}
+                        onClick={() => setNotificationTiming(mins)}
+                        className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${
+                          notificationTiming === mins
+                            ? 'text-white shadow-lg'
+                            : darkMode
+                              ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                              : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                        }`}
+                        style={notificationTiming === mins ? {
+                          background: `linear-gradient(to right, ${theme.primary}, ${theme.accent})`
+                        } : {}}
+                      >
+                        {mins} min
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Test Notification */}
+                  <button
+                    onClick={() => sendNotification('Test Notification', 'Notifications are working correctly!')}
+                    className={`mt-3 px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${
+                      darkMode
+                        ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                        : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                    }`}
+                  >
+                    <Bell className="w-4 h-4" />
+                    Test Notification
+                  </button>
+                </div>
+              )}
+            </div>
+          </GlassCard>
+
+          {/* Theme Settings */}
           <GlassCard darkMode={darkMode} className="mb-4">
             <div className="p-5">
               <h3 className={`text-lg font-bold mb-4 flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
@@ -1404,6 +4456,106 @@ export default function JustinSchedule() {
               </div>
             </div>
           </GlassCard>
+
+          {/* Data Management Section */}
+          <GlassCard darkMode={darkMode} className="mb-4">
+            <div className="p-5">
+              <h3 className={`text-lg font-bold mb-4 flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                <History className="w-5 h-5" style={{ color: theme.primary }} />
+                Data Management
+              </h3>
+
+              <div className="space-y-3">
+                {/* Clone Week */}
+                <button
+                  onClick={() => setShowCloneWeekModal(true)}
+                  className={`w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all ${
+                    darkMode
+                      ? 'bg-white/5 hover:bg-white/10'
+                      : 'bg-gray-100 hover:bg-gray-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <CopyPlus className={`w-5 h-5 ${darkMode ? 'text-white/70' : 'text-gray-600'}`} />
+                    <div className="text-left">
+                      <p className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                        Clone Schedule
+                      </p>
+                      <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                        Copy a day to all others or clear all
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight className={`w-4 h-4 ${darkMode ? 'text-white/40' : 'text-gray-400'}`} />
+                </button>
+
+                {/* Backup & Restore */}
+                <button
+                  onClick={() => setShowBackupModal(true)}
+                  className={`w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all ${
+                    darkMode
+                      ? 'bg-white/5 hover:bg-white/10'
+                      : 'bg-gray-100 hover:bg-gray-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <Archive className={`w-5 h-5 ${darkMode ? 'text-white/70' : 'text-gray-600'}`} />
+                    <div className="text-left">
+                      <p className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                        Backup & Restore
+                      </p>
+                      <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                        Export or import your schedule data
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight className={`w-4 h-4 ${darkMode ? 'text-white/40' : 'text-gray-400'}`} />
+                </button>
+              </div>
+
+              {/* Undo/Redo Info */}
+              {(undoStack.length > 0 || redoStack.length > 0) && (
+                <div className={`mt-4 p-3 rounded-xl ${darkMode ? 'bg-white/5' : 'bg-gray-50'}`}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <History className={`w-4 h-4 ${darkMode ? 'text-white/40' : 'text-gray-400'}`} />
+                      <span className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                        History: {undoStack.length} undo, {redoStack.length} redo steps
+                      </span>
+                    </div>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={undo}
+                        disabled={undoStack.length === 0}
+                        className={`p-1.5 rounded-lg transition-all ${
+                          undoStack.length === 0
+                            ? 'opacity-30 cursor-not-allowed'
+                            : darkMode
+                              ? 'hover:bg-white/10'
+                              : 'hover:bg-gray-200'
+                        }`}
+                      >
+                        <Undo2 className={`w-3.5 h-3.5 ${darkMode ? 'text-white/60' : 'text-gray-500'}`} />
+                      </button>
+                      <button
+                        onClick={redo}
+                        disabled={redoStack.length === 0}
+                        className={`p-1.5 rounded-lg transition-all ${
+                          redoStack.length === 0
+                            ? 'opacity-30 cursor-not-allowed'
+                            : darkMode
+                              ? 'hover:bg-white/10'
+                              : 'hover:bg-gray-200'
+                        }`}
+                      >
+                        <Redo2 className={`w-3.5 h-3.5 ${darkMode ? 'text-white/60' : 'text-gray-500'}`} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </GlassCard>
           </>
         )}
 
@@ -1411,6 +4563,269 @@ export default function JustinSchedule() {
         {/* DASHBOARD VIEW */}
         {/* ===================================== */}
         {view === 'dashboard' && (
+          <>
+          {/* Weekly Goals Section */}
+          <GlassCard darkMode={darkMode} className="mb-4" glow glowColor={theme.accent}>
+            <div className="p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className={`text-lg font-bold flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                  <Target className="w-5 h-5" style={{ color: theme.accent }} />
+                  Weekly Goals
+                </h3>
+                <button
+                  onClick={() => setShowGoalEditor(!showGoalEditor)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                    showGoalEditor
+                      ? 'text-white shadow-md'
+                      : darkMode
+                        ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                        : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                  }`}
+                  style={showGoalEditor ? {
+                    background: `linear-gradient(to right, ${theme.primary}, ${theme.accent})`
+                  } : {}}
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  {showGoalEditor ? 'Done' : 'Set Goals'}
+                </button>
+              </div>
+
+              {/* Goal Editor */}
+              {showGoalEditor && (
+                <div className={`mb-4 p-4 rounded-xl animate-scale-in ${darkMode ? 'bg-white/5' : 'bg-gray-50'}`}>
+                  <p className={`text-sm font-medium mb-3 ${darkMode ? 'text-white/70' : 'text-gray-600'}`}>
+                    Set weekly time goals by category:
+                  </p>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {categoryList.map(cat => {
+                      const catInfo = categories[cat];
+                      const hasGoal = weeklyGoals[cat];
+                      const Icon = catInfo.icon;
+                      return (
+                        <button
+                          key={cat}
+                          onClick={() => startGoalEdit(cat)}
+                          className={`p-3 rounded-xl text-left transition-all hover:scale-[1.02] ${
+                            hasGoal
+                              ? ''
+                              : darkMode
+                                ? 'bg-white/5 hover:bg-white/10'
+                                : 'bg-white hover:bg-gray-100'
+                          }`}
+                          style={hasGoal ? {
+                            backgroundColor: `${catInfo.accent}20`,
+                            borderLeft: `3px solid ${catInfo.accent}`
+                          } : {}}
+                        >
+                          <div className="flex items-center gap-2 mb-1">
+                            <Icon className="w-4 h-4" style={{ color: catInfo.accent }} />
+                            <span className={`text-xs font-medium truncate ${darkMode ? 'text-white/70' : 'text-gray-600'}`}>
+                              {cat}
+                            </span>
+                          </div>
+                          <span className={`text-sm font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                            {hasGoal ? `${weeklyGoals[cat]}h / week` : 'Set goal'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Active Goals Progress */}
+              {Object.keys(weeklyGoals).length > 0 ? (
+                <div className="space-y-3">
+                  {Object.entries(goalProgress)
+                    .sort((a, b) => b[1].percentage - a[1].percentage)
+                    .map(([category, progress]) => {
+                      const catInfo = categories[category];
+                      const Icon = catInfo?.icon || Star;
+                      return (
+                        <div
+                          key={category}
+                          className={`p-4 rounded-xl transition-all ${
+                            darkMode ? 'bg-white/5' : 'bg-gray-50'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <div
+                                className="w-8 h-8 rounded-lg flex items-center justify-center"
+                                style={{ backgroundColor: `${catInfo?.accent}20` }}
+                              >
+                                <Icon className="w-4 h-4" style={{ color: catInfo?.accent }} />
+                              </div>
+                              <div>
+                                <p className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                                  {category}
+                                </p>
+                                <p className={`text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                                  {formatDuration(progress.actualMinutes)} / {formatDuration(progress.goalMinutes)}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className={`text-lg font-bold ${
+                                progress.exceeded
+                                  ? 'text-green-500'
+                                  : progress.percentage >= 80
+                                    ? darkMode ? 'text-white' : 'text-gray-900'
+                                    : progress.percentage >= 50
+                                      ? 'text-yellow-500'
+                                      : 'text-orange-500'
+                              }`}>
+                                {Math.round(progress.percentage)}%
+                              </p>
+                              {progress.exceeded && (
+                                <p className="text-xs text-green-500 flex items-center gap-1">
+                                  <Check className="w-3 h-3" /> Goal reached!
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                          {/* Progress Bar */}
+                          <div className={`h-2 rounded-full overflow-hidden ${darkMode ? 'bg-white/10' : 'bg-gray-200'}`}>
+                            <div
+                              className="h-full rounded-full transition-all duration-500"
+                              style={{
+                                width: `${Math.min(100, progress.percentage)}%`,
+                                backgroundColor: progress.exceeded ? '#22c55e' : catInfo?.accent
+                              }}
+                            />
+                          </div>
+                          {!progress.exceeded && progress.remaining > 0 && (
+                            <p className={`text-xs mt-2 ${darkMode ? 'text-white/40' : 'text-gray-400'}`}>
+                              {formatDuration(progress.remaining)} remaining this week
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
+              ) : (
+                <div className={`text-center py-6 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                  <Target className="w-10 h-10 mx-auto mb-3 opacity-50" />
+                  <p className="font-medium mb-1">No goals set yet</p>
+                  <p className="text-sm opacity-75">
+                    Click "Set Goals" to track your weekly time targets
+                  </p>
+                </div>
+              )}
+            </div>
+          </GlassCard>
+
+          {/* Goal Editor Modal */}
+          {editingGoal.category && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+              <GlassCard darkMode={darkMode} className="w-full max-w-sm animate-scale-in">
+                <div className="p-5">
+                  <h3 className={`font-bold mb-4 flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                    <Target className="w-5 h-5" style={{ color: categories[editingGoal.category]?.accent }} />
+                    Set {editingGoal.category} Goal
+                  </h3>
+
+                  <div className="mb-4">
+                    <label className={`block text-xs font-medium mb-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                      Hours per week
+                    </label>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => setEditingGoal({ ...editingGoal, hours: Math.max(0, editingGoal.hours - 1) })}
+                        className={`p-2 rounded-lg transition-all ${
+                          darkMode ? 'bg-white/10 hover:bg-white/20' : 'bg-gray-100 hover:bg-gray-200'
+                        }`}
+                      >
+                        <Minus className={`w-4 h-4 ${darkMode ? 'text-white' : 'text-gray-600'}`} />
+                      </button>
+                      <input
+                        type="number"
+                        value={editingGoal.hours}
+                        onChange={(e) => setEditingGoal({ ...editingGoal, hours: Math.max(0, parseInt(e.target.value) || 0) })}
+                        className={`w-20 text-center px-3 py-2 rounded-xl border-2 transition-all outline-none text-lg font-bold ${
+                          darkMode
+                            ? 'bg-white/5 border-white/10 text-white focus:border-white/30'
+                            : 'bg-white border-gray-200 text-gray-900 focus:border-gray-300'
+                        }`}
+                        min="0"
+                        max="168"
+                      />
+                      <button
+                        onClick={() => setEditingGoal({ ...editingGoal, hours: Math.min(168, editingGoal.hours + 1) })}
+                        className={`p-2 rounded-lg transition-all ${
+                          darkMode ? 'bg-white/10 hover:bg-white/20' : 'bg-gray-100 hover:bg-gray-200'
+                        }`}
+                      >
+                        <Plus className={`w-4 h-4 ${darkMode ? 'text-white' : 'text-gray-600'}`} />
+                      </button>
+                    </div>
+                    <p className={`text-xs mt-2 ${darkMode ? 'text-white/40' : 'text-gray-400'}`}>
+                      Current: {formatDuration(stats[editingGoal.category]?.weekly || 0)} this week
+                    </p>
+                  </div>
+
+                  {/* Quick Presets */}
+                  <div className="flex flex-wrap gap-2 mb-4">
+                    {[5, 10, 15, 20, 30, 40].map(h => (
+                      <button
+                        key={h}
+                        onClick={() => setEditingGoal({ ...editingGoal, hours: h })}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                          editingGoal.hours === h
+                            ? 'text-white shadow-md'
+                            : darkMode
+                              ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                              : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                        }`}
+                        style={editingGoal.hours === h ? {
+                          background: categories[editingGoal.category]?.accent
+                        } : {}}
+                      >
+                        {h}h
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex gap-2">
+                    {weeklyGoals[editingGoal.category] && (
+                      <button
+                        onClick={() => saveGoal(editingGoal.category, 0)}
+                        className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                          darkMode
+                            ? 'bg-red-500/20 hover:bg-red-500/30 text-red-400'
+                            : 'bg-red-100 hover:bg-red-200 text-red-700'
+                        }`}
+                      >
+                        Remove
+                      </button>
+                    )}
+                    <button
+                      onClick={() => { setEditingGoal({ category: '', hours: 0 }); }}
+                      className={`flex-1 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                        darkMode
+                          ? 'bg-white/5 hover:bg-white/10 text-white/70'
+                          : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                      }`}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => saveGoal(editingGoal.category, editingGoal.hours)}
+                      disabled={editingGoal.hours <= 0}
+                      className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium text-white shadow-lg transition-all hover:scale-[1.02] disabled:opacity-50 disabled:hover:scale-100"
+                      style={{
+                        background: `linear-gradient(to right, ${theme.primary}, ${theme.accent})`
+                      }}
+                    >
+                      Save Goal
+                    </button>
+                  </div>
+                </div>
+              </GlassCard>
+            </div>
+          )}
+
+          {/* Analytics Section */}
           <GlassCard darkMode={darkMode} className="mb-4">
             <div className="p-5">
               <h3 className={`text-lg font-bold mb-4 flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
@@ -1498,6 +4913,7 @@ export default function JustinSchedule() {
               </div>
             </div>
           </GlassCard>
+          </>
         )}
 
         {/* ===================================== */}
@@ -1606,7 +5022,25 @@ export default function JustinSchedule() {
                     })}
                   </div>
                 </div>
-                
+
+                {/* Notes (Optional) */}
+                <div>
+                  <label className={`block text-xs font-medium mb-2 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                    Notes (Optional)
+                  </label>
+                  <textarea
+                    value={newItem.notes}
+                    onChange={(e) => setNewItem({ ...newItem, notes: e.target.value })}
+                    placeholder="Add notes, reminders, or details..."
+                    rows={2}
+                    className={`w-full px-4 py-3 rounded-xl border-2 transition-all outline-none resize-none ${
+                      darkMode
+                        ? 'bg-white/5 border-white/10 text-white placeholder-white/30 focus:border-white/30'
+                        : 'bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:border-gray-300'
+                    }`}
+                  />
+                </div>
+
                 {/* Action Buttons */}
                 <div className="flex gap-2 justify-end pt-2">
                   <button
@@ -1637,11 +5071,350 @@ export default function JustinSchedule() {
         )}
 
         {/* ===================================== */}
-        {/* SCHEDULE LIST */}
+        {/* SEARCH & FILTER BAR */}
         {/* ===================================== */}
         {view === 'schedule' && (
           <GlassCard darkMode={darkMode} className="mb-4">
             <div className="p-4">
+              {/* Search Input */}
+              <div className="flex items-center gap-2 mb-3">
+                <div className={`flex-1 flex items-center gap-2 px-4 py-2.5 rounded-xl border-2 transition-all ${
+                  darkMode
+                    ? 'bg-white/5 border-white/10 focus-within:border-white/30'
+                    : 'bg-white border-gray-200 focus-within:border-gray-300'
+                }`}>
+                  <Search className={`w-4 h-4 flex-shrink-0 ${darkMode ? 'text-white/40' : 'text-gray-400'}`} />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search activities..."
+                    className={`flex-1 bg-transparent outline-none text-sm ${
+                      darkMode ? 'text-white placeholder-white/40' : 'text-gray-900 placeholder-gray-400'
+                    }`}
+                  />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery('')}
+                      className={`p-1 rounded-full transition-all ${
+                        darkMode ? 'hover:bg-white/10' : 'hover:bg-gray-100'
+                      }`}
+                    >
+                      <X className={`w-3.5 h-3.5 ${darkMode ? 'text-white/50' : 'text-gray-400'}`} />
+                    </button>
+                  )}
+                </div>
+                {/* Timeline Toggle */}
+                <button
+                  onClick={() => setShowTimelineView(!showTimelineView)}
+                  className={`p-2.5 rounded-xl transition-all ${
+                    showTimelineView
+                      ? 'text-white shadow-lg'
+                      : darkMode
+                        ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                        : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                  }`}
+                  style={showTimelineView ? {
+                    background: `linear-gradient(to right, ${theme.primary}, ${theme.accent})`
+                  } : {}}
+                  title={showTimelineView ? 'List view' : 'Timeline view'}
+                >
+                  {showTimelineView ? <GripVertical className="w-5 h-5" /> : <LayoutGrid className="w-5 h-5" />}
+                </button>
+
+                {/* Insights Button */}
+                <button
+                  onClick={() => setShowInsightsModal(true)}
+                  className={`p-2.5 rounded-xl transition-all ${
+                    darkMode
+                      ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                  }`}
+                  title="Activity insights"
+                >
+                  <LineChart className="w-5 h-5" />
+                </button>
+
+                {/* Smart Scheduler Button */}
+                <button
+                  onClick={() => setShowAutoScheduler(true)}
+                  className={`p-2.5 rounded-xl transition-all ${
+                    darkMode
+                      ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                  }`}
+                  title="Smart scheduler - find best time slots"
+                >
+                  <Wand2 className="w-5 h-5" />
+                </button>
+
+                {/* Print View Button */}
+                <button
+                  onClick={() => setShowPrintView(true)}
+                  className={`p-2.5 rounded-xl transition-all ${
+                    darkMode
+                      ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                  }`}
+                  title="Print schedule"
+                >
+                  <Printer className="w-5 h-5" />
+                </button>
+
+                {/* Weekly Review Button */}
+                <button
+                  onClick={() => setShowWeeklyReview(true)}
+                  className={`p-2.5 rounded-xl transition-all ${
+                    darkMode
+                      ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                  }`}
+                  title="Weekly review & reflection"
+                >
+                  <BookOpen className="w-5 h-5" />
+                </button>
+
+                {/* Time Budget Button */}
+                <button
+                  onClick={() => setShowBudgetSettings(true)}
+                  className={`p-2.5 rounded-xl transition-all relative ${
+                    budgetWarnings.length > 0
+                      ? 'bg-amber-500/20 text-amber-500'
+                      : darkMode
+                        ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                        : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                  }`}
+                  title="Time budgets"
+                >
+                  <Gauge className="w-5 h-5" />
+                  {budgetWarnings.length > 0 && (
+                    <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-amber-500 text-white text-xs flex items-center justify-center font-bold">
+                      !
+                    </span>
+                  )}
+                </button>
+
+                {/* Template Library Button */}
+                <button
+                  onClick={() => setShowTemplateLibrary(true)}
+                  className={`p-2.5 rounded-xl transition-all ${
+                    darkMode
+                      ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                  }`}
+                  title="Activity templates"
+                >
+                  <Library className="w-5 h-5" />
+                </button>
+
+                {/* Conflict Warning Indicator */}
+                {scheduleConflicts.length > 0 && (
+                  <button
+                    onClick={() => setShowConflicts(true)}
+                    className="p-2.5 rounded-xl transition-all bg-amber-500/20 hover:bg-amber-500/30 text-amber-500 relative"
+                    title={`${scheduleConflicts.length} scheduling conflict(s)`}
+                  >
+                    <AlertTriangle className="w-5 h-5" />
+                    <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-amber-500 text-white text-xs flex items-center justify-center font-bold">
+                      {scheduleConflicts.length}
+                    </span>
+                  </button>
+                )}
+
+                {/* Filter Button */}
+                <button
+                  onClick={() => setShowFilters(!showFilters)}
+                  className={`p-2.5 rounded-xl transition-all ${
+                    showFilters || categoryFilter !== 'all'
+                      ? 'text-white shadow-lg'
+                      : darkMode
+                        ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                        : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                  }`}
+                  style={showFilters || categoryFilter !== 'all' ? {
+                    background: `linear-gradient(to right, ${theme.primary}, ${theme.accent})`
+                  } : {}}
+                >
+                  <Filter className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Category Filter Pills */}
+              {showFilters && (
+                <div className="flex flex-wrap gap-2 mb-3 animate-fade-in">
+                  <button
+                    onClick={() => setCategoryFilter('all')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                      categoryFilter === 'all'
+                        ? 'text-white shadow-md'
+                        : darkMode
+                          ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                          : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                    }`}
+                    style={categoryFilter === 'all' ? {
+                      background: `linear-gradient(to right, ${theme.primary}, ${theme.accent})`
+                    } : {}}
+                  >
+                    All
+                  </button>
+                  {categoryList.map(cat => {
+                    const catInfo = categories[cat];
+                    return (
+                      <button
+                        key={cat}
+                        onClick={() => setCategoryFilter(categoryFilter === cat ? 'all' : cat)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                          categoryFilter === cat
+                            ? 'text-white shadow-md'
+                            : darkMode
+                              ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                              : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                        }`}
+                        style={categoryFilter === cat ? {
+                          background: catInfo.accent
+                        } : {}}
+                      >
+                        {cat}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Active Filter Badge */}
+              {(searchQuery || categoryFilter !== 'all') && (
+                <div className={`flex items-center gap-2 mb-3 text-xs ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                  <span>Showing {filteredSchedule.length} activities</span>
+                  {(searchQuery || categoryFilter !== 'all') && (
+                    <button
+                      onClick={() => { setSearchQuery(''); setCategoryFilter('all'); }}
+                      className={`px-2 py-1 rounded-lg transition-all ${
+                        darkMode ? 'bg-white/10 hover:bg-white/20' : 'bg-gray-200 hover:bg-gray-300'
+                      }`}
+                    >
+                      Clear filters
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </GlassCard>
+        )}
+
+        {/* ===================================== */}
+        {/* TIMELINE VIEW */}
+        {/* ===================================== */}
+        {view === 'schedule' && showTimelineView && (
+          <GlassCard darkMode={darkMode} className="mb-4">
+            <div className="p-4">
+              <div className="relative" style={{ minHeight: `${(timelineEndHour - timelineStartHour) * 60}px` }}>
+                {/* Hour markers */}
+                {Array.from({ length: timelineEndHour - timelineStartHour + 1 }, (_, i) => {
+                  const hour = timelineStartHour + i;
+                  const hour12 = hour > 12 ? hour - 12 : hour === 0 ? 12 : hour;
+                  const ampm = hour >= 12 ? 'PM' : 'AM';
+                  return (
+                    <div
+                      key={hour}
+                      className="absolute left-0 right-0 flex items-start"
+                      style={{ top: `${i * 60}px` }}
+                    >
+                      <span className={`text-xs w-16 flex-shrink-0 ${darkMode ? 'text-white/30' : 'text-gray-400'}`}>
+                        {hour12} {ampm}
+                      </span>
+                      <div className={`flex-1 border-t ${darkMode ? 'border-white/10' : 'border-gray-200'}`} />
+                    </div>
+                  );
+                })}
+
+                {/* Current time indicator */}
+                {(() => {
+                  const now = currentTime;
+                  const currentMins = now.getHours() * 60 + now.getMinutes();
+                  const startMins = timelineStartHour * 60;
+                  const top = currentMins - startMins;
+                  if (top >= 0 && top <= (timelineEndHour - timelineStartHour) * 60) {
+                    return (
+                      <div
+                        className="absolute left-16 right-0 flex items-center z-10"
+                        style={{ top: `${top}px` }}
+                      >
+                        <div
+                          className="w-2 h-2 rounded-full"
+                          style={{ backgroundColor: theme.primary }}
+                        />
+                        <div
+                          className="flex-1 h-0.5"
+                          style={{ backgroundColor: theme.primary }}
+                        />
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+
+                {/* Activity blocks */}
+                {filteredSchedule.map((item) => {
+                  const catInfo = categories[item.category] || categories['Personal'];
+                  const startMins = parseTimeToMinutes(item.time);
+                  const timelineStartMins = timelineStartHour * 60;
+                  const top = startMins - timelineStartMins;
+                  const height = Math.max(item.duration, 20);
+
+                  if (top < 0 || top > (timelineEndHour - timelineStartHour) * 60) return null;
+
+                  return (
+                    <div
+                      key={item.id}
+                      className={`absolute left-16 right-2 rounded-lg px-3 py-2 cursor-pointer transition-all hover:scale-[1.02] overflow-hidden ${
+                        item.special ? 'ring-2 ring-amber-400' : ''
+                      }`}
+                      style={{
+                        top: `${top}px`,
+                        height: `${height}px`,
+                        backgroundColor: `${catInfo.accent}20`,
+                        borderLeft: `4px solid ${catInfo.accent}`
+                      }}
+                      onClick={() => startEdit(item)}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className={`text-sm font-medium truncate ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                          {item.activity}
+                        </span>
+                        {item.notes && <MessageSquare className="w-3 h-3 flex-shrink-0 opacity-50" />}
+                        {recurringPatterns[item.id] && <Repeat className="w-3 h-3 flex-shrink-0 opacity-50" />}
+                      </div>
+                      {height > 35 && (
+                        <p className={`text-xs truncate ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                          {item.time} • {formatDuration(item.duration)}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </GlassCard>
+        )}
+
+        {/* ===================================== */}
+        {/* SCHEDULE LIST */}
+        {/* ===================================== */}
+        {view === 'schedule' && !showTimelineView && (
+          <GlassCard darkMode={darkMode} className="mb-4">
+            <div className="p-4">
+              {/* Empty State */}
+              {filteredSchedule.length === 0 && (
+                <div className={`text-center py-8 ${darkMode ? 'text-white/50' : 'text-gray-500'}`}>
+                  <Search className="w-10 h-10 mx-auto mb-3 opacity-50" />
+                  <p className="font-medium mb-1">No activities found</p>
+                  <p className="text-sm opacity-75">
+                    {searchQuery || categoryFilter !== 'all'
+                      ? 'Try adjusting your search or filters'
+                      : 'Add some activities to get started'}
+                  </p>
+                </div>
+              )}
               <div className="space-y-2">
                 {filteredSchedule.map((item, index) => {
                   const catInfo = categories[item.category] || categories['Personal'];
@@ -1708,6 +5481,19 @@ export default function JustinSchedule() {
                           title="Copy to day"
                         >
                           <Copy className="w-4 h-4" />
+                        </button>
+
+                        {/* Recurring */}
+                        <button
+                          onClick={() => setShowRecurringModal(item)}
+                          className={`p-2 rounded-lg transition-all ${
+                            recurringPatterns[item.id]
+                              ? 'bg-blue-500 text-white'
+                              : 'bg-cyan-500/80 text-white hover:bg-cyan-500'
+                          }`}
+                          title="Set recurring"
+                        >
+                          <Repeat className="w-4 h-4" />
                         </button>
                       </div>
                       
@@ -1877,13 +5663,41 @@ export default function JustinSchedule() {
                               />
                             </div>
                           </div>
-                          
-                          <div className="flex gap-2 justify-end">
+
+                          {/* Notes Field */}
+                          <div className="flex items-start gap-2">
+                            <MessageSquare className={`w-4 h-4 mt-2.5 ${darkMode ? 'text-white/40' : 'text-gray-400'}`} />
+                            <textarea
+                              value={editValues.notes}
+                              onChange={(e) => setEditValues({ ...editValues, notes: e.target.value })}
+                              placeholder="Add notes..."
+                              rows={2}
+                              className={`flex-1 px-3 py-2 rounded-lg border-2 transition-all outline-none text-xs resize-none ${
+                                darkMode
+                                  ? 'bg-white/5 border-white/10 text-white placeholder-white/30 focus:border-white/30'
+                                  : 'bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:border-gray-300'
+                              }`}
+                            />
+                          </div>
+
+                          <div className="flex gap-2 justify-end flex-wrap">
+                            <button
+                              onClick={() => setShowSaveTemplate(item)}
+                              className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-all ${
+                                darkMode
+                                  ? 'bg-white/5 hover:bg-white/10 text-white/60'
+                                  : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                              }`}
+                              title="Save as reusable template"
+                            >
+                              <FolderPlus className="w-4 h-4" />
+                              Template
+                            </button>
                             <button
                               onClick={() => deleteItem(item.id)}
                               className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-all ${
-                                darkMode 
-                                  ? 'bg-red-500/20 hover:bg-red-500/30 text-red-400' 
+                                darkMode
+                                  ? 'bg-red-500/20 hover:bg-red-500/30 text-red-400'
                                   : 'bg-red-100 hover:bg-red-200 text-red-700'
                               }`}
                             >
@@ -1928,8 +5742,14 @@ export default function JustinSchedule() {
                             {item.special && (
                               <Sparkles className="w-4 h-4 text-amber-400 flex-shrink-0" />
                             )}
+                            {item.notes && (
+                              <MessageSquare className={`w-3.5 h-3.5 flex-shrink-0 ${darkMode ? 'text-white/40' : 'text-gray-400'}`} title="Has notes" />
+                            )}
+                            {recurringPatterns[item.id] && (
+                              <Repeat className={`w-3.5 h-3.5 flex-shrink-0 ${darkMode ? 'text-blue-400/60' : 'text-blue-500/60'}`} title="Recurring activity" />
+                            )}
                             {isCurrent && (
-                              <span 
+                              <span
                                 className="px-2 py-0.5 rounded-full text-xs font-bold text-white animate-pulse"
                                 style={{ backgroundColor: catInfo.accent }}
                               >
@@ -1944,6 +5764,14 @@ export default function JustinSchedule() {
                             </span>
                             <span>•</span>
                             <span>{formatDuration(item.duration)}</span>
+                            {item.notes && (
+                              <>
+                                <span>•</span>
+                                <span className="truncate max-w-[100px]" title={item.notes}>
+                                  {item.notes.length > 20 ? item.notes.substring(0, 20) + '...' : item.notes}
+                                </span>
+                              </>
+                            )}
                           </div>
                         </div>
                       )}
